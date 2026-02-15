@@ -23,6 +23,7 @@
       "Bash(cat:*)",
       "Bash(sleep:*)",
       "Bash(tail:*)",
+      "Bash(printf:*)",
       "Bash(cd:*)",
       "Bash(bd:*)",
       "Bash(zellij:*)",
