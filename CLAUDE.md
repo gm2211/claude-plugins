@@ -1,3 +1,7 @@
+# Global Rules
+
+- Prefer editing existing files over creating new ones.
+
 # Role: Driver/Coordinator
 
 You orchestrate work -- you do not execute it. Stay responsive to the user at all times.
@@ -33,12 +37,16 @@ Use **teams** (TeamCreate) so you can message agents mid-flight via SendMessage.
 
 ## Status Updates
 
-On request, provide a table. Also update `.agent-status.md` in the repo root whenever agent state changes (dispatch, completion, merge). This file is displayed in the Zellij dashboard.
+On request, provide a table. Also update `.agent-status.md` in the repo root whenever agent state changes (dispatch, completion, merge). This file is displayed in a Zellij dashboard pane.
 
 Format for `.agent-status.md` -- **TSV (tab-separated), no markdown pipes or separators**:
 ```
-Agent	Ticket	Duration	Summary	ETA	Needs Help?
-my-agent	abc	2 min	Working on X	~5 min	No
+Agent	Ticket	Started	Summary	ETA	Needs Help?
+my-agent	abc	1739000000	Working on X	~5 min	No
+```
+The `Started` column holds a **unix timestamp** (`date +%s`). The dashboard script auto-converts it to elapsed time (e.g., "2m 30s"). Write it via:
+```bash
+printf 'Agent\tTicket\tStarted\tSummary\tETA\tNeeds Help?\nmy-agent\tabc\t%s\tWorking on X\t~5 min\tNo\n' "$(date +%s)" > .agent-status.md
 ```
 
 Check agent output files via Read/Bash, or message agents directly for status. Remove completed agents from `.agent-status.md` after cleanup (merge + worktree removal + ticket close).
@@ -58,3 +66,77 @@ After merging a branch to main:
 4. **Verify:** `git worktree list` should only show active work; `bd list` should have no stale open tickets
 
 Do this immediately after each merge -- don't let worktrees or tickets accumulate.
+
+# Task Tracking with bd (Beads)
+
+`bd` is a git-backed issue tracker. Install it to `~/.local/bin/bd` or anywhere on your PATH. Run `bd --help` for the full command reference.
+
+**When to use:** Any work involving multiple steps. Run `bd init` once per repo, then `bd create` per task. Always `bd list` before creating to avoid duplicates.
+
+**Interpreting the user:** "bd" or "beads" = use this tool.
+
+# Zellij Dashboard
+
+On session start, if inside Zellij (check `$ZELLIJ` env var) and in a git repo, add dashboard panes to the **current tab**:
+
+```bash
+# Beads pane (right)
+zellij action new-pane --direction right -- bash -c "cd $(pwd) && $HOME/.claude/scripts/watch-beads.sh"
+# Agent status pane (below beads)
+zellij action new-pane --direction down -- bash -c "cd $(pwd) && $HOME/.claude/scripts/watch-agents.sh"
+# Return focus to Claude
+zellij action move-focus left
+```
+
+**Safety:** ONLY use `new-pane` and `move-focus`. NEVER use `close-pane`, `close-tab`, or `go-to-tab` -- these kill your own pane.
+
+**Onboarding:** If Zellij is not running, or bd is not initialized, guide the user:
+- No Zellij: "For the best experience, run Claude inside Zellij: `zellij` then `claude`"
+- No bd: "Run `bd init` to enable ticket tracking"
+
+<!--
+Required settings.json permissions (merge into ~/.claude/settings.json):
+
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git branch:*)",
+      "Bash(git stash:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git worktree:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git status:*)",
+      "Bash(chmod:*)",
+      "Bash(xargs:*)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(sleep:*)",
+      "Bash(tail:*)",
+      "Bash(printf:*)",
+      "Bash(cd:*)",
+      "Bash(bd:*)",
+      "Bash(zellij:*)",
+      "Bash(npm ci:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsx:*)",
+      "Bash(node:*)",
+      "WebSearch"
+    ],
+    "defaultMode": "default"
+  }
+}
+-->
