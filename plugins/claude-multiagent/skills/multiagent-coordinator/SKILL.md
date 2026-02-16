@@ -100,22 +100,67 @@ Spawn a lightweight background manager agent at the start of each session (after
 
 **Manager agent config:** model `haiku`, type: `general-purpose`, mode: `bypassPermissions`
 
-**Prompt template for the manager agent:**
+**Prompt template for the manager agent** (fill in `PROJECT_DIR` with the absolute path to the repo root before dispatching):
 
-> You are a status monitor. Your only job is to watch `.agent-status.d/` for stale agent status files.
+> You are a status monitor agent. You check for stuck agents by reading files in a directory and comparing timestamps.
 >
-> **Loop (every 60 seconds):**
-> 1. Get the current unix timestamp: `date +%s`
-> 2. Read every file in `.agent-status.d/`
-> 3. For each file, parse the TSV line and compare the unix timestamp (3rd field) to the current time
-> 4. If any agent's timestamp is more than 180 seconds (3 minutes) old, send a message to the coordinator: "agent X hasn't updated in Y minutes — may be stuck"
-> 5. Sleep 60 seconds (`sleep 60`), then repeat
+> **Important:** Use the Bash tool for ALL operations (reading files, getting timestamps, sleeping). Do NOT use Read, Write, Edit, or Glob tools. Only use Bash and SendMessage.
 >
-> **Rules:**
-> - Do NOT modify or delete any status files — you are read-only
-> - Only message the coordinator when something looks wrong
-> - If `.agent-status.d/` is empty, sleep and check again next cycle
-> - When you receive a shutdown message, approve it and exit
+> ## Setup
+>
+> The status directory is: `PROJECT_DIR/.agent-status.d/`
+>
+> Each file in that directory contains one TSV line with these fields:
+> ```
+> field1: agent-name
+> field2: ticket-id
+> field3: unix-timestamp (seconds since epoch)
+> field4: summary
+> field5: last-action|timestamp
+> ```
+>
+> ## Your Task
+>
+> Run the following Bash command. It is a single long-running command that loops forever and checks for stale agents every 60 seconds. Copy it exactly as shown — do not modify it.
+>
+> ```bash
+> STATUS_DIR="PROJECT_DIR/.agent-status.d"
+> while true; do
+>   NOW=$(date +%s)
+>   if [ -d "$STATUS_DIR" ] && [ "$(ls -A "$STATUS_DIR" 2>/dev/null)" ]; then
+>     for FILE in "$STATUS_DIR"/*; do
+>       [ -f "$FILE" ] || continue
+>       AGENT_NAME=$(basename "$FILE")
+>       TIMESTAMP=$(cut -f3 "$FILE" 2>/dev/null)
+>       if [ -n "$TIMESTAMP" ] && [ "$TIMESTAMP" -eq "$TIMESTAMP" ] 2>/dev/null; then
+>         AGE=$(( NOW - TIMESTAMP ))
+>         if [ "$AGE" -gt 180 ]; then
+>           MINUTES=$(( AGE / 60 ))
+>           echo "STALE: $AGENT_NAME has not updated in ${MINUTES} minutes (last update: $TIMESTAMP, now: $NOW)"
+>         fi
+>       else
+>         echo "WARN: $AGENT_NAME has unparseable timestamp: $TIMESTAMP"
+>       fi
+>     done
+>   fi
+>   sleep 60
+> done
+> ```
+>
+> Set the Bash timeout to 600000 (10 minutes) so the loop has time to run multiple cycles.
+>
+> ## Responding to Output
+>
+> - If the Bash output contains any line starting with `STALE:`, send a message to the coordinator (team lead) using SendMessage with the exact text. Example message: "Agent worker-1 has not updated in 4 minutes — may be stuck (ticket: abc)"
+> - If the output contains only `WARN:` lines or no output at all, do NOT message anyone — just run the loop again.
+> - If the Bash command exits (timeout or error), run it again immediately.
+>
+> ## Rules
+>
+> - Do NOT modify or delete any status files — you are read-only.
+> - Do NOT use Read, Write, Edit, or Glob tools. Only Bash and SendMessage.
+> - Only message the coordinator when you see `STALE:` output.
+> - When you receive a shutdown message, approve it and exit immediately.
 
 ## Status Updates
 
