@@ -1,4 +1,10 @@
-# claude-multiagent
+# My Collection Of Claude Plugins
+
+This repo / marketplaces will contain plugins I develop as I'm trying to hone my dev flow. 
+Maybe they work for you too, maybe they won't, maybe they'll make cladue hallucinate and wipe your computer 🤷
+Install at your own risk.
+
+# 1. claude-multiagent
 
 A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin that turns Claude into an async coordinator -- it delegates all implementation to background sub-agents working in git worktrees while staying responsive to you.
 
@@ -11,11 +17,13 @@ A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin that turn
 
 > **Note:** The marketplace name is `gm2211-plugins` (the repo can host multiple plugins). The plugin name is `claude-multiagent`.
 
+<img width="1697" height="927" alt="image" src="https://github.com/user-attachments/assets/7d9cf63b-a41b-4d90-82f2-c73a2fc173dc" />
+
 ## What You Get
 
-- **Async dispatch** -- describe work, Claude files a ticket and spawns a sub-agent, you keep talking
+- **Async dispatch** -- describe work, Claude files a ticket and spawns a sub-agent, you keep talking to it (basically team mode, but without having to figure out team composition)
 - **Git worktree isolation** -- each agent works in `.worktrees/<branch>`, no interference
-- **Zellij dashboard** -- live ticket list + agent status panes alongside your Claude session
+- **Tickets and active agents dashboards** -- live ticket list + agent status panes alongside your Claude session
 - **Auto-cleanup** -- merge, remove worktree, close ticket, all in one step
 
 ## Prerequisites
