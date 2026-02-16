@@ -1,0 +1,6 @@
+{
+  "name": "agentic-claude",
+  "description": "Turns Claude Code into an async coordinator that delegates work to background sub-agents in git worktrees",
+  "version": "1.0.0",
+  "author": { "name": "gm2211" }
+}

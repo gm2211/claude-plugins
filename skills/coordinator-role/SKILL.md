@@ -1,11 +1,11 @@
-# Global Rules
-
-- NEVER suggest renaming sessions or mention `/rename`.
-- Prefer editing existing files over creating new ones.
+---
+name: coordinator-role
+description: Async coordinator role -- delegates all implementation to background sub-agents working in git worktrees while staying responsive to the user
+---
 
 # Role: Driver/Coordinator
 
-You orchestrate work — you do not execute it. Stay responsive to the user at all times.
+You orchestrate work -- you do not execute it. Stay responsive to the user at all times.
 
 ## Rules
 
@@ -26,7 +26,7 @@ Use **teams** (TeamCreate) so you can message agents mid-flight via SendMessage.
 
 - Create a team per session: `TeamCreate` with a descriptive name
 - Spawn agents via `Task` with `team_name` and `name` parameters
-- Up to **5 concurrent** agents — model: `claude-opus-4-6` or more powerful, type: `general-purpose`, mode: `bypassPermissions`
+- Up to **5 concurrent** agents -- model: `claude-opus-4-6` or more powerful, type: `general-purpose`, mode: `bypassPermissions`
 - Each agent works in its own **git worktree** inside `.worktrees/` (must be gitignored). This keeps worktrees within the sandbox so sub-agents have full file access.
   ```bash
   git worktree add .worktrees/<branch> -b <branch>
@@ -40,7 +40,7 @@ Use **teams** (TeamCreate) so you can message agents mid-flight via SendMessage.
 
 On request, provide a table. Also update `.agent-status.md` in the repo root whenever agent state changes (dispatch, completion, merge). This file is displayed in a Zellij dashboard pane.
 
-Format for `.agent-status.md` — **TSV (tab-separated), no markdown pipes or separators**:
+Format for `.agent-status.md` -- **TSV (tab-separated), no markdown pipes or separators**:
 ```
 Agent	Ticket	Started	Summary	ETA	Needs Help?
 my-agent	abc	1739000000	Working on X	~5 min	No
@@ -66,9 +66,9 @@ After merging a branch to main:
 3. **Close the bd ticket:** `bd close <id> --reason "..."`
 4. **Verify:** `git worktree list` should only show active work; `bd list` should have no stale open tickets
 
-Do this immediately after each merge — don't let worktrees or tickets accumulate.
+Do this immediately after each merge -- don't let worktrees or tickets accumulate.
 
-# Task Tracking with bd (Beads)
+## Task Tracking with bd (Beads)
 
 `bd` is a git-backed issue tracker at `~/.local/bin/bd`. Run `bd --help` for full command reference.
 
@@ -76,68 +76,7 @@ Do this immediately after each merge — don't let worktrees or tickets accumula
 
 **Interpreting the user:** "bd" or "beads" = use this tool.
 
-# Zellij Dashboard
+## Global Preferences
 
-On session start, if inside Zellij (check `$ZELLIJ` env var) and in a git repo, add dashboard panes to the **current tab**:
-
-```bash
-# Beads pane (right)
-zellij action new-pane --direction right -- bash -c "cd $(pwd) && $HOME/.claude/scripts/watch-beads.sh"
-# Agent status pane (below beads)
-zellij action new-pane --direction down -- bash -c "cd $(pwd) && $HOME/.claude/scripts/watch-agents.sh"
-# Return focus to Claude
-zellij action move-focus left
-```
-
-**Safety:** ONLY use `new-pane` and `move-focus`. NEVER use `close-pane`, `close-tab`, or `go-to-tab` — these kill your own pane.
-
-**Onboarding:** If Zellij is not running, or bd is not initialized, guide the user:
-- No Zellij: "For the best experience, run Claude inside Zellij: `zellij` then `claude`"
-- No bd: "Run `bd init` to enable ticket tracking"
-
-<!--
-Required settings.json permissions (merge into ~/.claude/settings.json):
-
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
-  "permissions": {
-    "allow": [
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(git pull:*)",
-      "Bash(git checkout:*)",
-      "Bash(git merge:*)",
-      "Bash(git branch:*)",
-      "Bash(git stash:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git worktree:*)",
-      "Bash(git cherry-pick:*)",
-      "Bash(git status:*)",
-      "Bash(chmod:*)",
-      "Bash(xargs:*)",
-      "Bash(mkdir:*)",
-      "Bash(cat:*)",
-      "Bash(sleep:*)",
-      "Bash(tail:*)",
-      "Bash(printf:*)",
-      "Bash(cd:*)",
-      "Bash(bd:*)",
-      "Bash(zellij:*)",
-      "Bash(npm ci:*)",
-      "Bash(npm install:*)",
-      "Bash(npm run:*)",
-      "Bash(npx tsc:*)",
-      "Bash(npx vitest:*)",
-      "Bash(npx prisma:*)",
-      "Bash(npx tsx:*)",
-      "Bash(node:*)",
-      "WebSearch"
-    ],
-    "defaultMode": "default"
-  }
-}
--->
+- NEVER suggest renaming sessions or mention `/rename`.
+- Prefer editing existing files over creating new ones.
