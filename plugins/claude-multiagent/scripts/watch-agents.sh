@@ -294,13 +294,46 @@ render_table() {
     widths[$i]=$(( ${widths[$i]} + 2 ))
   done
 
-  # Shrink columns if table exceeds terminal width
+  # Cap fixed-width columns: Agent(15), Ticket(12), Duration(12)
+  local -a max_fixed=(15 12 12 0 0)
+  for ((i=0; i<3 && i<ncols; i++)); do
+    if [ ${max_fixed[$i]} -gt 0 ] && [ ${widths[$i]} -gt ${max_fixed[$i]} ]; then
+      widths[$i]=${max_fixed[$i]}
+    fi
+  done
+
+  # Target table width: terminal minus 2 chars left/right padding
+  local target_width=$(( term_width - 4 ))
+  local border_chars=$(( ncols + 1 ))  # │ between and around columns
+  local available=$(( target_width - border_chars ))
+
+  # Sum current fixed columns (0=Agent, 1=Ticket, 2=Duration)
+  local fixed_total=0
+  for ((i=0; i<3 && i<ncols; i++)); do
+    fixed_total=$(( fixed_total + widths[i] ))
+  done
+
+  # Distribute remaining width to Summary (col 3) and Last Action (col 4)
+  if [ $ncols -ge 5 ]; then
+    local flex_space=$(( available - fixed_total ))
+    if [ $flex_space -lt 10 ]; then flex_space=10; fi
+    # Split 55% / 45% between Summary and Last Action
+    local summary_w=$(( flex_space * 55 / 100 ))
+    local action_w=$(( flex_space - summary_w ))
+    # Ensure minimums
+    [ $summary_w -lt 5 ] && summary_w=5
+    [ $action_w -lt 5 ] && action_w=5
+    widths[3]=$summary_w
+    widths[4]=$action_w
+  fi
+
+  # Final shrink pass if table still exceeds terminal width
   local total=0
   for ((i=0; i<ncols; i++)); do total=$(( total + widths[i] )); done
-  total=$(( total + ncols + 1 ))
+  total=$(( total + border_chars ))
   local min_col=5
-  if [ $total -gt $term_width ] && [ $ncols -gt 0 ]; then
-    local excess=$(( total - term_width ))
+  if [ $total -gt $target_width ] && [ $ncols -gt 0 ]; then
+    local excess=$(( total - target_width ))
     while [ $excess -gt 0 ]; do
       local widest=-1 widest_w=0
       for ((i=0; i<ncols; i++)); do
@@ -334,7 +367,7 @@ render_table() {
     fi
   done
 
-  printf '%s\n' "$top_border"
+  printf '  %s\n' "$top_border"
 
   local row_idx=0
   for line in "${display_lines[@]}"; do
@@ -347,8 +380,8 @@ render_table() {
       local max_content=$(( w - 2 ))
       if [ $max_content -lt 1 ]; then max_content=1; fi
       if [ $len -gt $max_content ]; then
-        if [ $max_content -ge 3 ]; then
-          cell="${cell:0:$((max_content - 2))}.."
+        if [ $max_content -ge 2 ]; then
+          cell="${cell:0:$((max_content - 1))}…"
         else
           cell="${cell:0:$max_content}"
         fi
@@ -363,14 +396,14 @@ render_table() {
         printf -v row '%s %s%*s│' "$row" "$cell" "$rpad" ''
       fi
     done
-    printf '%s\n' "$row"
+    printf '  %s\n' "$row"
     if [ $row_idx -eq 0 ]; then
-      printf '%s\n' "$mid_border"
+      printf '  %s\n' "$mid_border"
     fi
     ((row_idx++))
   done
 
-  printf '%s\n' "$bot_border"
+  printf '  %s\n' "$bot_border"
 }
 
 # Render the stacked/card layout for narrow panes (<60 cols).
