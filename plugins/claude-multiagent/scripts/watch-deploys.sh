@@ -8,19 +8,21 @@
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PROVIDERS_DIR="${SCRIPT_DIR}/providers"
+CONFIG_FILE=".deploy-watch.json"
+
 # Hide cursor; restore on exit
 cleanup() {
   tput cnorm 2>/dev/null
+  stty echo icanon 2>/dev/null
   # Kill background fswatch if running
   [[ -n "${FSWATCH_PID:-}" ]] && kill "$FSWATCH_PID" 2>/dev/null
   exit
 }
 trap cleanup INT TERM EXIT
 tput civis 2>/dev/null
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-PROVIDERS_DIR="${SCRIPT_DIR}/providers"
-CONFIG_FILE=".deploy-watch.json"
+stty -echo -icanon 2>/dev/null
 
 # State
 CACHED_OUTPUT=""
@@ -490,6 +492,7 @@ configure_provider() {
   local provider="$1"
 
   tput cnorm 2>/dev/null  # Show cursor for input
+  stty echo icanon 2>/dev/null  # Enable echo for field input
 
   printf '\n  %sConfiguring %s%s\n\n' "$C_BOLD" "$(provider_display_name "$provider")" "$C_RESET"
 
@@ -510,6 +513,7 @@ configure_provider() {
     if [ "$frequired" = "true" ] && [ -z "$val" ]; then
       printf '  %sRequired field cannot be empty.%s\n' "$C_RED" "$C_RESET"
       tput civis 2>/dev/null
+      stty -echo -icanon 2>/dev/null
       return 1
     fi
 
@@ -541,6 +545,7 @@ configure_provider() {
   sleep 1
 
   tput civis 2>/dev/null  # Hide cursor again
+  stty -echo -icanon 2>/dev/null  # Restore raw mode
   return 0
 }
 
@@ -606,25 +611,32 @@ do_refresh() {
 handle_input() {
   local key="$1"
 
+  # Empty key means nothing useful was read
+  [[ -z "$key" ]] && return
+
+  # Help screen: any key dismisses
   if $SHOW_HELP; then
     SHOW_HELP=false
     return
   fi
 
+  # Provider menu: handle selection or cancel
   if $SHOW_PROVIDER_MENU; then
     local -a providers=()
     while IFS= read -r p; do
       [ -n "$p" ] && providers+=("$p")
     done < <(list_providers)
 
-    if [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
+    if [[ "$key" == "q" ]] || [[ "$key" == "Q" ]] || [[ "$key" == "ESC" ]]; then
       SHOW_PROVIDER_MENU=false
+      PROVIDER_MENU_STEP=""
       return
     fi
 
     if [[ "$key" =~ ^[0-9]$ ]] && [ "$key" -ge 1 ] && [ "$key" -le ${#providers[@]} ]; then
       local selected="${providers[$((key - 1))]}"
       SHOW_PROVIDER_MENU=false
+      PROVIDER_MENU_STEP=""
       clear
       printf '%s%sDeploy Watch%s\n' "$C_BOLD" "$C_WHITE" "$C_RESET"
       if configure_provider "$selected"; then
@@ -634,9 +646,11 @@ handle_input() {
     return
   fi
 
+  # Main screen key handling
   case "$key" in
     p|P)
       SHOW_PROVIDER_MENU=true
+      PROVIDER_MENU_STEP="select"
       ;;
     r|R)
       REFRESH_TRIGGER=true
@@ -694,6 +708,22 @@ last_poll=$(date +%s)
 while true; do
   # Non-blocking read with short timeout (for spinner animation)
   if read -rsn1 -t 2 key 2>/dev/null; then
+    # Handle escape sequences (arrows, ESC)
+    if [[ "$key" == $'\x1b' ]]; then
+      read -rsn1 -t 0.05 seq1 2>/dev/null
+      if [[ "$seq1" == "[" ]]; then
+        read -rsn1 -t 0.05 seq2 2>/dev/null
+        case "$seq2" in
+          A) key="UP" ;;
+          B) key="DOWN" ;;
+          *) key="" ;;
+        esac
+      elif [[ -z "$seq1" ]]; then
+        key="ESC"
+      else
+        key=""
+      fi
+    fi
     handle_input "$key"
   fi
 
