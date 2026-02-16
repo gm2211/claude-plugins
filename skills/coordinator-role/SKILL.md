@@ -26,7 +26,8 @@ Use **teams** (TeamCreate) so you can message agents mid-flight via SendMessage.
 
 - Create a team per session: `TeamCreate` with a descriptive name
 - Spawn agents via `Task` with `team_name` and `name` parameters
-- Up to **`$MAX_SUBAGENTS`** concurrent agents (default: 5, set via env var `MAX_SUBAGENTS`) -- model: `claude-opus-4-6` or more powerful, type: `general-purpose`, mode: `bypassPermissions`
+- **Max concurrent agents:** On first dispatch of each session, ask the user how many concurrent agents to allow (suggest 5 as default). Respect this limit for the rest of the session.
+- Agent config: model `claude-opus-4-6` or more powerful, type: `general-purpose`, mode: `bypassPermissions`
 - Each agent works in its own **git worktree** inside `.worktrees/` (must be gitignored). This keeps worktrees within the sandbox so sub-agents have full file access.
   ```bash
   git worktree add .worktrees/<branch> -b <branch>

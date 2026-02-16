@@ -24,12 +24,6 @@ claude plugin add -- https://github.com/gm2211/claude-multiagent
 - [bd (beads)](https://github.com/gm2211/beads) issue tracker
 - Git
 
-## Configuration
-
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `MAX_SUBAGENTS` | `5` | Max concurrent sub-agents |
-
 ## Required Permissions
 
 Add to `~/.claude/settings.json`:
