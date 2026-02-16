@@ -92,6 +92,15 @@ load_tickets() {
     return
   fi
 
+  # "No issues found." means zero tickets — treat as empty list
+  if [[ "$raw_output" == "No issues found." ]]; then
+    TICKET_IDS=()
+    TICKET_LINES=("No open tickets.")
+    TICKET_RAW=()
+    SUMMARY_LINE=""
+    return
+  fi
+
   # Detect common prefix from first ticket ID (e.g. "claude-plugins-")
   local prefix=""
   local first_id
