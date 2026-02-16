@@ -8,11 +8,39 @@
 # - Detects multiple Claude sessions in the same tab and warns instead of
 #   opening duplicate panes
 # - Skips deploy pane if disabled in plugin config
+# - Uses a lock to prevent concurrent runs from creating duplicate panes
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_DIR="${1:-$PWD}"
+
+# ---------------------------------------------------------------------------
+# Lock — prevent concurrent runs from creating duplicate panes
+# ---------------------------------------------------------------------------
+# Uses mkdir as an atomic lock. If SessionStart fires multiple times quickly,
+# only one instance proceeds; others exit silently.
+
+LOCK_DIR="/tmp/open-dashboard-${ZELLIJ_SESSION_NAME:-$$}.lock"
+
+cleanup_lock() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+# Remove stale locks older than 30 seconds (e.g., from a crashed run)
+if [[ -d "$LOCK_DIR" ]]; then
+  lock_mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
+  lock_age=$(( $(date +%s) - lock_mtime ))
+  if [[ $lock_age -gt 30 ]]; then
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
+fi
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  # Another instance is already running — exit silently
+  exit 0
+fi
+trap cleanup_lock EXIT
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,17 +79,26 @@ get_focused_tab_layout() {
   printf '%s' "$result"
 }
 
-# Count how many panes in the layout run a command whose args contain a pattern.
-count_panes_with_arg() {
+# Check if a dashboard pane exists by its name attribute OR by its script args.
+# Panes are created with --name "dashboard-beads" etc., so checking the name=
+# attribute in the layout dump is more reliable than args alone.
+has_dashboard_pane() {
   local layout="$1"
-  local pattern="$2"
-  local count=0
+  local pane_name="$2"    # e.g. "dashboard-beads"
+  local script_name="$3"  # e.g. "watch-beads.sh"
   while IFS= read -r line; do
-    if [[ "$line" == *"args "* && "$line" == *"$pattern"* ]]; then
-      (( count++ ))
+    # Match by pane name attribute: name="dashboard-beads"
+    if [[ "$line" == *"name=\"${pane_name}\""* ]]; then
+      echo 1
+      return
+    fi
+    # Match by script name in args (fallback for panes created without --name)
+    if [[ "$line" == *"args "* && "$line" == *"$script_name"* ]]; then
+      echo 1
+      return
     fi
   done <<< "$layout"
-  echo "$count"
+  echo 0
 }
 
 # Count how many panes in the layout run the "claude" command.
@@ -112,9 +149,10 @@ for config_path in \
 done
 
 # --- Detect existing dashboard panes ---
-has_beads=$(count_panes_with_arg "$focused_tab" "watch-beads.sh")
-has_agents=$(count_panes_with_arg "$focused_tab" "watch-agents.sh")
-has_deploys=$(count_panes_with_arg "$focused_tab" "watch-deploys.sh")
+# Uses both pane name= attribute and script args for robust detection.
+has_beads=$(has_dashboard_pane "$focused_tab" "dashboard-beads" "watch-beads.sh")
+has_agents=$(has_dashboard_pane "$focused_tab" "dashboard-agents" "watch-agents.sh")
+has_deploys=$(has_dashboard_pane "$focused_tab" "dashboard-deploys" "watch-deploys.sh")
 
 all_present=true
 [[ "$has_beads" -eq 0 ]] && all_present=false
