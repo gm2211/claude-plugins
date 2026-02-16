@@ -113,13 +113,25 @@ Do this immediately after each merge -- don't let worktrees or tickets accumulat
 
 ## Dashboard
 
-Open Zellij panes showing agent status and open tickets alongside your Claude session.
+Open Zellij panes showing agent status, open tickets, and deploy status alongside your Claude session.
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/claude-multiagent}/scripts/open-dashboard.sh"
 ```
 
 **ONLY** use `new-pane` and `move-focus` Zellij actions. **NEVER** use `close-pane`, `close-tab`, or `go-to-tab`.
+
+## Deploy Awareness
+
+The dashboard includes a deploy watch pane that monitors deployment status via pluggable providers. After merging and pushing a branch, check the deploy pane to confirm the deployment succeeds before closing the ticket.
+
+**Deploy pane keys:** `p` to configure a provider, `r` to refresh, `?` for help.
+
+**Configuration:** The deploy pane reads `.deploy-watch.json` from the project root. Press `p` in the deploy pane to interactively select a provider and enter config values. API keys come from environment variables (never stored in config).
+
+**Custom providers:** Users can create their own provider scripts in the `scripts/providers/` directory. See `scripts/providers/README.md` for the contract specification.
+
+**Disabling:** To skip the deploy pane, add `deploy_pane: disabled` to `.claude/claude-multiagent.local.md`.
 
 ## Global Preferences
 

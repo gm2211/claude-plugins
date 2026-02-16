@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open Zellij dashboard panes for beads (tickets) and agent status.
+# Open Zellij dashboard panes for beads (tickets), agent status, and deploy watch.
 # Called by both the SessionStart hook and the agents-dashboard skill.
 # Fails silently when not running inside Zellij.
 #
@@ -7,6 +7,7 @@
 # - Detects existing dashboard panes and only creates missing ones
 # - Detects multiple Claude sessions in the same tab and warns instead of
 #   opening duplicate panes
+# - Skips deploy pane if disabled in plugin config
 
 set -euo pipefail
 
@@ -96,18 +97,38 @@ if [[ "$claude_count" -gt 1 ]]; then
   exit 0
 fi
 
+# --- Check if deploy pane is disabled ---
+deploy_pane_enabled=true
+for config_path in \
+  "${PROJECT_DIR}/.claude/claude-multiagent.local.md" \
+  "${HOME}/.claude/claude-multiagent.local.md"; do
+  if [[ -f "$config_path" ]] && grep -q 'deploy_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+    deploy_pane_enabled=false
+    break
+  fi
+done
+
 # --- Detect existing dashboard panes ---
 has_beads=$(count_panes_with_arg "$focused_tab" "watch-beads.sh")
 has_agents=$(count_panes_with_arg "$focused_tab" "watch-agents.sh")
+has_deploys=$(count_panes_with_arg "$focused_tab" "watch-deploys.sh")
 
-if [[ "$has_beads" -gt 0 && "$has_agents" -gt 0 ]]; then
-  # Both panes already exist -- nothing to do
+all_present=true
+[[ "$has_beads" -eq 0 ]] && all_present=false
+[[ "$has_agents" -eq 0 ]] && all_present=false
+if $deploy_pane_enabled && [[ "$has_deploys" -eq 0 ]]; then
+  all_present=false
+fi
+
+if $all_present; then
+  # All expected panes already exist -- nothing to do
   exit 0
 fi
 
 # Open missing panes. When both are missing we create the standard layout
-# (beads on the right, agents below beads). When only one is missing we
-# add it in the right direction relative to the existing split.
+# (beads on the right, agents below beads, deploys below agents).
+# When only one is missing we add it in the right direction relative to
+# the existing split.
 
 if [[ "$has_beads" -eq 0 ]]; then
   zellij action new-pane --name "dashboard-beads" --direction right \
@@ -126,6 +147,14 @@ if [[ "$has_agents" -eq 0 ]]; then
 
   zellij action new-pane --name "dashboard-agents" --direction down \
     -- bash -c "cd '${PROJECT_DIR}' && '${SCRIPT_DIR}/watch-agents.sh'" 2>/dev/null || true
+fi
+
+if $deploy_pane_enabled && [[ "$has_deploys" -eq 0 ]]; then
+  # Deploy pane goes below agents. Move focus down to the agents pane area.
+  zellij action move-focus down 2>/dev/null || true
+
+  zellij action new-pane --name "dashboard-deploys" --direction down \
+    -- bash -c "cd '${PROJECT_DIR}' && '${SCRIPT_DIR}/watch-deploys.sh'" 2>/dev/null || true
 fi
 
 # Return focus to the original (left) pane where Claude runs

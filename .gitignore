@@ -3,3 +3,4 @@
 .agent-status.d/
 .beads/
 .DS_Store
+.deploy-watch.json
