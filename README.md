@@ -1,12 +1,18 @@
 # My Collection Of Claude Plugins
 
 This repo / marketplaces will contain plugins I develop as I'm trying to hone my dev flow. 
-Maybe they work for you too, maybe they won't, maybe they'll make cladue hallucinate and wipe your computer 🤷
-Install at your own risk.
+| :warning: WARNING           |
+|:----------------------------|
+| Maybe they work for you too, maybe they won't. |
+| Maybe they'll make cladue hallucinate and wipe your computer 🤷 |
+| Install at your own risk. |
 
 # 1. claude-multiagent
 
 A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin that turns Claude into an async coordinator -- it delegates all implementation to background sub-agents working in git worktrees while staying responsive to you.
+
+> [!IMPORTANT]  
+> You have to remind Claude, every now and then, that it is a coordinator (I just say "yo, you're supposed to be the coordinator"). This is especially true in a new session, no matter how strongly worded the prompt in the hook for this plugin is.
 
 ## Install
 
