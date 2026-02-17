@@ -51,6 +51,10 @@ def elapsed_str(seconds: int) -> str:
         return f"{seconds // 60}m {seconds % 60}s"
     hours = seconds // 3600
     mins = (seconds % 3600) // 60
+    if hours >= 24:
+        days = hours // 24
+        remaining_h = hours % 24
+        return f"{days}d {remaining_h}h"
     return f"{hours}h {mins}m"
 
 
@@ -363,7 +367,11 @@ def render_card(stdscr, row: int, agent: dict, agent_idx: int,
 
     # ── Updated row: │ Updated: Xs ago  │ ──
     LABEL_U = "Updated: "
-    updated_val = elapsed_str(updated_ago_secs) + " ago"
+    AGO_SUFFIX = " ago"
+    elapsed_raw = elapsed_str(updated_ago_secs)
+    # Truncate elapsed value (not the suffix) so " ago" always fits
+    elapsed_max = inner - 1 - len(LABEL_U) - len(AGO_SUFFIX)
+    updated_val = truncate(elapsed_raw, max(elapsed_max, 1)) + AGO_SUFFIX
     updated_content = pad_right(" " + LABEL_U + updated_val, inner)
     if row < max_y:
         safe_addstr(stdscr, row, x, "│", border_attr)
