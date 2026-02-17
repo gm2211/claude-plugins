@@ -16,7 +16,7 @@ Output JSON describing required configuration fields:
 {
   "fields": [
     {"key": "serviceId", "label": "Service ID", "required": true},
-    {"key": "apiKeyEnv", "label": "API Key env var", "default": "RENDER_API_KEY"}
+    {"key": "apiKeyEnv", "label": "API Key env var", "default": "RENDER_DOT_COM_TOK"}
   ]
 }
 ```
@@ -61,7 +61,7 @@ Output JSON lines (one JSON object per line), one per deploy, most recent first:
 
 Provider scripts receive their config via environment variables. For each key in the provider's config section of `.deploy-watch.json`, the key is passed as `DEPLOY_WATCH_<KEY>` (uppercased). For example, if the config has `"serviceId": "srv-xxx"`, the provider receives `DEPLOY_WATCH_SERVICEID=srv-xxx`.
 
-API keys are read from environment variables named in the config (e.g., `RENDER_API_KEY`). They are never stored in `.deploy-watch.json`.
+API keys are read from environment variables named in the config (e.g., `RENDER_DOT_COM_TOK`). They are never stored in `.deploy-watch.json`.
 
 ## Writing a custom provider
 

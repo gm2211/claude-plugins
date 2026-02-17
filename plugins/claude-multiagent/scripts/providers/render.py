@@ -19,10 +19,15 @@ def get_config_from_env():
         print("Error: DEPLOY_WATCH_SERVICEID is not set", file=sys.stderr)
         sys.exit(1)
 
-    api_key_env = os.environ.get("DEPLOY_WATCH_APIKEYENV", "RENDER_API_KEY")
+    api_key_env = os.environ.get("DEPLOY_WATCH_APIKEYENV", "RENDER_DOT_COM_TOK")
     api_key = os.environ.get(api_key_env, "")
     if not api_key:
-        print(f"Error: environment variable {api_key_env} is not set", file=sys.stderr)
+        print(
+            f"Error: environment variable {api_key_env} is not set. "
+            f"Set it to your Render API key, or specify a different env var "
+            f"name via apiKeyEnv in .deploy-watch.json.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     return service_id, api_key
@@ -91,7 +96,7 @@ def cmd_config():
                 "key": "apiKeyEnv",
                 "label": "API Key env var",
                 "required": False,
-                "default": "RENDER_API_KEY",
+                "default": "RENDER_DOT_COM_TOK",
             },
         ]
     }

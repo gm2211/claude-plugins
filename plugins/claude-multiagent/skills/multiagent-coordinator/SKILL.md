@@ -238,4 +238,24 @@ The dashboard includes a deploy watch pane that monitors deployment status via p
 
 **Custom providers:** Users can create their own provider scripts in the `scripts/providers/` directory. See `scripts/providers/README.md` for the contract specification.
 
+### Auto-configuring via MCP
+
+When the deploy pane is unconfigured, check if a relevant MCP server is available before asking the user to configure manually. For Render.com:
+
+1. **Detect MCP tools:** Look for tools prefixed with `mcp__render__` (e.g., `mcp__render__list_services`, `mcp__render__get_service`). If present, the Render MCP server is connected and authenticated.
+2. **Discover service IDs:** Call `mcp__render__list_services` to enumerate services. Match by name or URL to identify the service being deployed.
+3. **Write config programmatically:** Write `.deploy-watch.json` with the discovered service ID:
+   ```json
+   {
+     "provider": "render.py",
+     "render.py": {
+       "serviceId": "srv-xxxxxxxxxxxxx"
+     }
+   }
+   ```
+   The provider reads the API key from the `RENDER_DOT_COM_TOK` environment variable by default (the same variable the Render MCP server uses), so no key configuration is needed.
+4. **Verify:** After writing the config, the deploy pane will pick it up on its next refresh cycle (or the user can press `r`).
+
+This approach means users with MCP servers connected get automatic deploy monitoring with zero manual setup.
+
 **Disabling:** To skip the deploy pane, add `deploy_pane: disabled` to `.claude/claude-multiagent.local.md`.
