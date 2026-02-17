@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/close-dashboard.sh",
+            "async": false
+          }
+        ]
+      }
     ]
   }
 }

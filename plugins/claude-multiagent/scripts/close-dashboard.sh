@@ -3,7 +3,7 @@
 # processes that run inside them.  When a process exits, Zellij automatically
 # closes the pane.
 #
-# Called by the Stop hook when a Claude Code session ends.
+# Called by the Stop and SessionEnd hooks when a Claude Code session ends.
 # Fails silently when not running inside Zellij.
 
 set -euo pipefail
