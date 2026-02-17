@@ -86,24 +86,35 @@ get_focused_tab_layout() {
 # anywhere in command= or args lines, which catches panes created by older
 # plugin versions (without --name) running from any path (including the
 # plugin cache).
+#
+# IMPORTANT: The script-name fallback also requires PROJECT_DIR to appear on
+# the same line.  This prevents a pane from a *different* project (in another
+# Zellij tab) from being mistakenly detected as belonging to this project when
+# get_focused_tab_layout() returns a superset of panes or stale versions
+# without the UUID mechanism are running.
 has_dashboard_pane() {
   local layout="$1"
   local pane_name="$2"    # e.g. "dashboard-beads"
   local script_name="$3"  # e.g. "watch-beads.py"
+  local project_dir="$4"  # e.g. "/Users/me/my-project" (used to scope script-name fallback)
   while IFS= read -r line; do
     # Match by pane name attribute: name="dashboard-beads"
+    # Named panes include a DASH_ID suffix (e.g. dashboard-beads-abc12345) and
+    # are already scoped to the focused tab, so no project-dir check needed.
     if [[ "$line" == *"name=\"${pane_name}"* ]]; then
       echo 1
       return
     fi
     # Match by script basename in command= (e.g. command="/path/to/watch-beads.py")
-    if [[ "$line" == *"command="* && "$line" == *"$script_name"* ]]; then
+    # Require PROJECT_DIR on the same line to avoid matching panes from other projects.
+    if [[ "$line" == *"command="* && "$line" == *"$script_name"* && "$line" == *"$project_dir"* ]]; then
       echo 1
       return
     fi
     # Match by script basename in args (any format: args "/path/watch-beads.py" ...)
     # This catches panes created without --name from any path.
-    if [[ "$line" == *"args"* && "$line" == *"$script_name"* ]]; then
+    # Require PROJECT_DIR on the same line to avoid matching panes from other projects.
+    if [[ "$line" == *"args"* && "$line" == *"$script_name"* && "$line" == *"$project_dir"* ]]; then
       echo 1
       return
     fi
@@ -162,9 +173,9 @@ done
 # Uses pane name= attribute, command=, and args for robust detection.
 # This catches both new named panes and old unnamed panes from cached
 # plugin versions running watch-*.py from any path.
-has_beads=$(has_dashboard_pane "$focused_tab" "dashboard-beads" "watch-beads.py")
-has_agents=$(has_dashboard_pane "$focused_tab" "dashboard-agents" "watch-agents.py")
-has_deploys=$(has_dashboard_pane "$focused_tab" "dashboard-deploys" "watch-deploys.py")
+has_beads=$(has_dashboard_pane "$focused_tab" "dashboard-beads" "watch-beads.py" "$PROJECT_DIR")
+has_agents=$(has_dashboard_pane "$focused_tab" "dashboard-agents" "watch-agents.py" "$PROJECT_DIR")
+has_deploys=$(has_dashboard_pane "$focused_tab" "dashboard-deploys" "watch-deploys.py" "$PROJECT_DIR")
 
 all_present=true
 [[ "$has_beads" -eq 0 ]] && all_present=false
