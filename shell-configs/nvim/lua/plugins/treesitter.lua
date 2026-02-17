@@ -1,0 +1,38 @@
+return {
+    "nvim-treesitter/nvim-treesitter",
+    build = ":TSUpdate",
+    event = { "BufReadPost", "BufNewFile" },
+    opts = {
+        ensure_installed = {
+            "bash",
+            "c",
+            "css",
+            "diff",
+            "git_config",
+            "git_rebase",
+            "gitcommit",
+            "gitignore",
+            "go",
+            "html",
+            "javascript",
+            "json",
+            "lua",
+            "markdown",
+            "markdown_inline",
+            "python",
+            "ruby",
+            "rust",
+            "toml",
+            "typescript",
+            "vim",
+            "vimdoc",
+            "yaml",
+        },
+        highlight = {
+            enable = true,
+        },
+        indent = {
+            enable = true,
+        },
+    },
+}
