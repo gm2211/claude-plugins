@@ -68,4 +68,4 @@ API keys are read from environment variables named in the config (e.g., `RENDER_
 1. Create a script in this directory (e.g., `my-provider.sh`)
 2. Make it executable: `chmod +x my-provider.sh`
 3. Implement all three commands: `name`, `config`, `list`
-4. Configure via `watch-deploys.sh` (press `p`) or manually edit `.deploy-watch.json`
+4. Configure via `watch-deploys.py` (press `p`) or manually edit `.deploy-watch.json`

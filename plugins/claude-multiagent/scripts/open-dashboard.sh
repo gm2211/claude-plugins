@@ -85,7 +85,7 @@ get_focused_tab_layout() {
 has_dashboard_pane() {
   local layout="$1"
   local pane_name="$2"    # e.g. "dashboard-beads"
-  local script_name="$3"  # e.g. "watch-beads.sh"
+  local script_name="$3"  # e.g. "watch-beads.py"
   while IFS= read -r line; do
     # Match by pane name attribute: name="dashboard-beads"
     if [[ "$line" == *"name=\"${pane_name}\""* ]]; then

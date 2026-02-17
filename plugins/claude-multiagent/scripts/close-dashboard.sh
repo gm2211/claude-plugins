@@ -145,15 +145,15 @@ kill_tree() {
 #   bash -c "cd '${PROJECT_DIR}' && '${SCRIPT_DIR}/watch-*.sh'"
 #
 # This spawns a process tree:
-#   1. bash -c "cd '/project' && '/path/to/watch-beads.sh'"   (wrapper)
-#   2.   /bin/bash /path/to/watch-beads.sh                    (child)
+#   1. bash -c "cd '/project' && '/path/to/watch-beads.py'"   (wrapper)
+#   2.   /bin/bash /path/to/watch-beads.py                    (child)
 #
 # The wrapper's cmdline contains PROJECT_DIR, but the child's does NOT.
 # We must kill the entire process tree — if we only kill the wrapper, the
 # child keeps running and the Zellij pane stays open.
 # ---------------------------------------------------------------------------
 
-WATCH_SCRIPTS=("watch-beads.sh" "watch-agents.sh" "watch-deploys.sh")
+WATCH_SCRIPTS=("watch-beads.py" "watch-agents.py" "watch-deploys.py")
 
 killed=0
 for script in "${WATCH_SCRIPTS[@]}"; do
@@ -187,8 +187,8 @@ for script in "${WATCH_SCRIPTS[@]}"; do
     fi
 
     # Parent match: this process is a child of a wrapper whose cmdline
-    # contains our project directory (e.g. /bin/bash watch-beads.sh spawned
-    # by bash -c "cd '/project' && './watch-beads.sh'").
+    # contains our project directory (e.g. /bin/bash watch-beads.py spawned
+    # by bash -c "cd '/project' && './watch-beads.py'").
     ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ' || true)
     if [[ -n "$ppid" && "$ppid" != "1" ]]; then
       parent_cmdline=$(ps -p "$ppid" -o args= 2>/dev/null || true)
