@@ -92,7 +92,7 @@ has_dashboard_pane() {
   local script_name="$3"  # e.g. "watch-beads.py"
   while IFS= read -r line; do
     # Match by pane name attribute: name="dashboard-beads"
-    if [[ "$line" == *"name=\"${pane_name}\""* ]]; then
+    if [[ "$line" == *"name=\"${pane_name}"* ]]; then
       echo 1
       return
     fi
@@ -178,6 +178,10 @@ if $all_present; then
   exit 0
 fi
 
+# Generate a unique dashboard instance ID so close-dashboard.sh can kill
+# only the processes belonging to THIS tab's dashboard panes.
+DASH_ID=$(uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]' | head -c 8)
+
 # Open missing panes. The target layout has all three dashboard panes
 # stacked vertically on the RIGHT side:
 #
@@ -198,8 +202,8 @@ fi
 
 if [[ "$has_beads" -eq 0 ]]; then
   # Create beads pane to the right of Claude. Focus moves to beads.
-  zellij action new-pane --name "dashboard-beads" --close-on-exit --direction right \
-    -- python3 "${SCRIPT_DIR}/watch-beads.py" "${PROJECT_DIR}" 2>/dev/null || true
+  zellij action new-pane --name "dashboard-beads-${DASH_ID}" --close-on-exit --direction right \
+    -- python3 "${SCRIPT_DIR}/watch-beads.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
 fi
 
 # The remaining panes split the right column downward; launch them in parallel.
@@ -208,8 +212,8 @@ fi
     # Ensure focus is on the right side (beads) before splitting downward.
     zellij action move-focus right 2>/dev/null || true
 
-    zellij action new-pane --name "dashboard-agents" --close-on-exit --direction down \
-      -- python3 "${SCRIPT_DIR}/watch-agents.py" "${PROJECT_DIR}" 2>/dev/null || true
+    zellij action new-pane --name "dashboard-agents-${DASH_ID}" --close-on-exit --direction down \
+      -- python3 "${SCRIPT_DIR}/watch-agents.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
     # Focus is now on the agents pane.
   fi
 
@@ -220,8 +224,8 @@ fi
     zellij action move-focus down 2>/dev/null || true
     zellij action move-focus down 2>/dev/null || true
 
-    zellij action new-pane --name "dashboard-deploys" --close-on-exit --direction down \
-      -- python3 "${SCRIPT_DIR}/watch-deploys.py" "${PROJECT_DIR}" 2>/dev/null || true
+    zellij action new-pane --name "dashboard-deploys-${DASH_ID}" --close-on-exit --direction down \
+      -- python3 "${SCRIPT_DIR}/watch-deploys.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
   fi
 
   # Return focus to the original (left) pane where Claude runs

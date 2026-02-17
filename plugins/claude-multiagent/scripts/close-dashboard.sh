@@ -100,12 +100,28 @@ count_claude_panes() {
   echo "$count"
 }
 
+# Extract the dashboard instance ID from pane names in the layout.
+# Panes are named "dashboard-beads-<ID>", "dashboard-agents-<ID>", etc.
+extract_dashboard_id() {
+  local layout="$1"
+  local id=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ name=\"dashboard-(beads|agents|deploys)-([a-f0-9]+)\" ]]; then
+      id="${BASH_REMATCH[2]}"
+      break
+    fi
+  done <<< "$layout"
+  echo "$id"
+}
+
 focused_tab=$(get_focused_tab_layout 2>/dev/null) || focused_tab=""
 claude_pane_count=0
 if [[ -n "$focused_tab" ]]; then
   claude_pane_count=$(count_claude_panes "$focused_tab")
 fi
 
+DASH_ID=$(extract_dashboard_id "$focused_tab")
+log "Dashboard ID from focused tab: ${DASH_ID:-none}"
 log "Claude pane check: found $claude_pane_count Claude pane(s) in focused tab"
 
 if [[ "$claude_pane_count" -ge 2 ]]; then
@@ -175,28 +191,36 @@ for script in "${WATCH_SCRIPTS[@]}"; do
       continue
     fi
 
-    # Direct match: process cmdline contains our project directory.
-    if [[ "$cmdline" == *"$PROJECT_DIR"* ]]; then
-      kill_tree "$pid" "$script"
-      (( killed++ )) || true
-      continue
-    fi
-
-    # Parent match: this process is a child of a wrapper whose cmdline
-    # contains our project directory (e.g. /bin/bash watch-beads.py spawned
-    # by bash -c "cd '/project' && './watch-beads.py'").
-    ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ' || true)
-    if [[ -n "$ppid" && "$ppid" != "1" ]]; then
-      parent_cmdline=$(ps -p "$ppid" -o args= 2>/dev/null || true)
-      if [[ "$parent_cmdline" == *"$PROJECT_DIR"* ]]; then
-        log "PID $pid ($script) matched via parent PID $ppid"
+    if [[ -n "$DASH_ID" ]]; then
+      # Tab-scoped: only kill processes with this dashboard ID
+      if [[ "$cmdline" == *"$DASH_ID"* ]]; then
         kill_tree "$pid" "$script"
         (( killed++ )) || true
         continue
       fi
+    else
+      # Legacy fallback: no dashboard ID in layout, match by PROJECT_DIR
+      if [[ "$cmdline" == *"$PROJECT_DIR"* ]]; then
+        kill_tree "$pid" "$script"
+        (( killed++ )) || true
+        continue
+      fi
+
+      # Parent match: this process is a child of a wrapper whose cmdline
+      # contains our project directory.
+      ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ' || true)
+      if [[ -n "$ppid" && "$ppid" != "1" ]]; then
+        parent_cmdline=$(ps -p "$ppid" -o args= 2>/dev/null || true)
+        if [[ "$parent_cmdline" == *"$PROJECT_DIR"* ]]; then
+          log "PID $pid ($script) matched via parent PID $ppid"
+          kill_tree "$pid" "$script"
+          (( killed++ )) || true
+          continue
+        fi
+      fi
     fi
 
-    log "Skipping PID $pid ($script) — belongs to different project"
+    log "Skipping PID $pid ($script) — belongs to different project/tab"
     log "  cmdline: $cmdline"
   done
 done

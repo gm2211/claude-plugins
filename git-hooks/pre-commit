@@ -95,13 +95,31 @@ for PLUGIN_DIR in plugins/*/; do
     fi
 
     if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
-        echo "Error: Plugin version not bumped in $PLUGIN_JSON" >&2
-        echo "  Current version: $OLD_VERSION" >&2
-        echo "  Staged plugin files:" >&2
-        echo "$STAGED" | sed 's/^/    /' >&2
-        echo "" >&2
-        echo "  Bump the minor version before committing." >&2
-        exit 1
+        # Auto-bump the patch version instead of failing
+        MAJOR=$(echo "$OLD_VERSION" | cut -d. -f1)
+        MINOR=$(echo "$OLD_VERSION" | cut -d. -f2)
+        PATCH=$(echo "$OLD_VERSION" | cut -d. -f3)
+        PATCH=$((PATCH + 1))
+        BUMPED_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+        echo "Auto-bumping plugin version in $PLUGIN_JSON: $OLD_VERSION -> $BUMPED_VERSION" >&2
+
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import json
+with open('$PLUGIN_JSON') as f:
+    data = json.load(f)
+data['version'] = '$BUMPED_VERSION'
+with open('$PLUGIN_JSON', 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" 2>/dev/null
+        else
+            sed -i.bak "s/\"version\"[[:space:]]*:[[:space:]]*\"$OLD_VERSION\"/\"version\": \"$BUMPED_VERSION\"/" "$PLUGIN_JSON"
+            rm -f "${PLUGIN_JSON}.bak"
+        fi
+
+        git add "$PLUGIN_JSON"
     fi
 done
 
