@@ -12,8 +12,6 @@
       "source": "./plugins/claude-multiagent",
       "description": "Turns Claude Code into an async coordinator that delegates work to background sub-agents in git worktrees",
       "version": "1.23.0"
-      "version": "1.23.0"
-      "version": "1.23.0"
     }
   ]
 }
