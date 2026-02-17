@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Agent status dashboard — curses TUI.
+"""Agent status dashboard — curses TUI with card-style layout.
 
 Reads per-agent status files from .agent-status.d/ and renders a
-full-width ASCII table with auto-refresh.  Replaces watch-agents.sh.
+fat-row card layout with Unicode box-drawing characters.
 
 Status file format (one TSV line per file):
     <agent>\t<ticket>\t<unix-ts>\t<summary>\t<last-action>|<unix-ts>
@@ -17,18 +17,26 @@ import time
 
 STATUS_DIR = ".agent-status.d"
 REFRESH_HALFDELAY_TENTHS = 20  # curses half-delay: 2 seconds
-MIN_COL_WIDTH = 8  # minimum column width when resizing
+STALE_THRESHOLD_SECONDS = 180  # >180s since update → stale (red)
 
-FIXED_COLS = [
-    ("Agent", 15),
-    ("Ticket(s)", 12),
-    ("Duration", 12),
+CARD_LEFT_MARGIN = 2
+CARD_MIN_WIDTH = 40
+CARD_HEIGHT = 6  # top border + 3 content rows + bottom border + blank gap
+
+# Color pair IDs
+COLOR_TITLE = 1
+COLOR_STALE = 2
+CARD_COLOR_START = 3
+
+# Foreground colors cycled across agent cards
+CARD_FG_COLORS = [
+    curses.COLOR_CYAN,
+    curses.COLOR_GREEN,
+    curses.COLOR_YELLOW,
+    curses.COLOR_MAGENTA,
+    curses.COLOR_BLUE,
+    curses.COLOR_WHITE,
 ]
-FLEX_COLS = [
-    ("Summary", 0.55),
-    ("Last Action", 0.45),
-]
-HEADERS = [name for name, _ in FIXED_COLS] + [name for name, _ in FLEX_COLS]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -46,17 +54,20 @@ def elapsed_str(seconds: int) -> str:
     return f"{hours}h {mins}m"
 
 
-def format_last_action(raw: str, now: float) -> str:
-    """Parse 'description|timestamp' into 'description (Xm ago)'."""
+def format_last_action(raw: str, now: float) -> tuple[str, str]:
+    """Parse 'description|timestamp' into (description, ago_string).
+
+    Returns (description, ago) where ago may be "" if not parseable.
+    """
     if "|" not in raw:
-        return raw
+        return raw, ""
     desc, _, ts_str = raw.rpartition("|")
     try:
         ts = int(ts_str)
         ago = elapsed_str(int(now - ts))
-        return f"{desc} ({ago} ago)"
+        return desc, ago
     except ValueError:
-        return raw
+        return raw, ""
 
 
 def common_prefix(strings: list[str]) -> str:
@@ -137,7 +148,6 @@ def read_status_dir(directory: str, seen: set[str]) -> list[dict]:
             continue
         parts = line.split("\t")
         if len(parts) < 5:
-            # Pad with empty strings
             parts.extend([""] * (5 - len(parts)))
         agents.append(
             {
@@ -186,69 +196,36 @@ def collect_agents(project_dir: str) -> list[dict]:
     return agents
 
 
-# ── Column width calculation ─────────────────────────────────────────────
+# ── Color initialization ──────────────────────────────────────────────────
 
-def compute_col_widths(term_width: int, user_widths: dict[int, int] | None = None) -> list[int]:
-    """Compute column widths to fill the full terminal width.
+def init_colors() -> bool:
+    """Initialize color pairs. Returns True if colors are available."""
+    if not curses.has_colors():
+        return False
+    curses.start_color()
+    curses.use_default_colors()
 
-    Fixed columns: Agent (15), Ticket(s) (12), Duration (12)
-    Flex columns: Summary (55%), Last Action (45%) of remaining space.
+    curses.init_pair(COLOR_TITLE, curses.COLOR_WHITE, -1)
+    curses.init_pair(COLOR_STALE, curses.COLOR_RED, -1)
 
-    If user_widths is provided, those columns use the user-specified widths
-    and the remaining flex space is distributed among non-overridden columns.
-    """
-    ncols = len(HEADERS)
-    border_chars = ncols + 1  # one | per column boundary plus edges
-    padding = 4  # 2 chars left/right margin
-    available = term_width - padding - border_chars
+    for i, fg in enumerate(CARD_FG_COLORS):
+        curses.init_pair(CARD_COLOR_START + i, fg, -1)
 
-    fixed_widths = [w for _, w in FIXED_COLS]
-    fixed_total = sum(fixed_widths)
+    return True
 
-    flex_space = max(available - fixed_total, 10)
-    flex_widths = [max(int(flex_space * frac), 5) for _, frac in FLEX_COLS]
-    # Ensure sum matches flex_space (rounding adjustment)
-    flex_widths[-1] = flex_space - sum(flex_widths[:-1])
-    if flex_widths[-1] < 5:
-        flex_widths[-1] = 5
 
-    widths = fixed_widths + flex_widths
-
-    # Apply user overrides
-    if user_widths:
-        for col_idx, w in user_widths.items():
-            if 0 <= col_idx < ncols:
-                widths[col_idx] = max(w, MIN_COL_WIDTH)
-
-    # Final shrink pass if we exceed target width
-    target = term_width - padding
-    total = sum(widths) + border_chars
-    while total > target:
-        # Shrink widest column that isn't user-pinned
-        candidates = [i for i in range(ncols) if not (user_widths and i in user_widths)]
-        if not candidates:
-            candidates = list(range(ncols))
-        widest = max(candidates, key=lambda i: widths[i])
-        if widths[widest] <= MIN_COL_WIDTH:
-            break
-        widths[widest] -= 1
-        total -= 1
-
-    return widths
+def card_attr(agent_idx: int, bold: bool = False) -> int:
+    """Return the curses attribute for a card's color."""
+    pair_id = CARD_COLOR_START + (agent_idx % len(CARD_FG_COLORS))
+    attr = curses.color_pair(pair_id)
+    if bold:
+        attr |= curses.A_BOLD
+    return attr
 
 
 # ── Rendering ────────────────────────────────────────────────────────────
 
-def truncate(text: str, max_len: int) -> str:
-    """Truncate text with ellipsis if it exceeds max_len."""
-    if len(text) <= max_len:
-        return text
-    if max_len >= 3:
-        return text[: max_len - 2] + ".."
-    return text[:max_len]
-
-
-def safe_addstr(win, y: int, x: int, text: str, attr: int = 0):
+def safe_addstr(win, y: int, x: int, text: str, attr: int = 0) -> None:
     """Write a string to a curses window, clipping to window bounds."""
     max_y, max_x = win.getmaxyx()
     if y < 0 or y >= max_y or x >= max_x:
@@ -264,284 +241,335 @@ def safe_addstr(win, y: int, x: int, text: str, attr: int = 0):
         pass
 
 
-def render(stdscr, project_dir: str, user_widths: dict[int, int] | None = None,
-           drag_sep: int | None = None) -> dict:
-    """Render a single frame of the dashboard.
+def truncate(text: str, max_len: int) -> str:
+    """Truncate text with ellipsis if it exceeds max_len."""
+    if len(text) <= max_len:
+        return text
+    if max_len >= 3:
+        return text[: max_len - 2] + ".."
+    return text[:max_len]
 
-    Returns a dict with layout info for mouse hit-testing:
-        header_y: int — the y coordinate of the header row
-        sep_xs: list[int] — x coordinates of each interior column separator
-        widths: list[int] — the column widths used for this frame
-        table_x: int — the x offset where the table starts
+
+def pad_right(text: str, width: int) -> str:
+    """Pad text with spaces on the right to reach exactly `width` chars."""
+    if len(text) >= width:
+        return text[:width]
+    return text + " " * (width - len(text))
+
+
+def render_card(stdscr, row: int, agent: dict, agent_idx: int,
+                card_width: int, now: float, selected: bool,
+                has_colors: bool) -> int:
+    """Render a single agent card at the given row.
+
+    Returns the row index after the card (including one blank gap line).
+    Card structure (6 rows total including gap):
+        ┌─ name ────────── ticket ─┐
+        │ Status: <summary>        │
+        │ Last:   <desc>  (<ago>)  │
+        │ Updated: Xs ago          │
+        └──────────────────────────┘
+        (blank)
     """
-    stdscr.erase()
-    layout = {"header_y": -1, "sep_xs": [], "widths": [], "table_x": 2}
+    max_y, _ = stdscr.getmaxyx()
+    x = CARD_LEFT_MARGIN
 
-    max_y, max_x = stdscr.getmaxyx()
-    if max_y < 3 or max_x < 20:
-        safe_addstr(stdscr, 0, 0, "Terminal too small")
-        stdscr.noutrefresh()
-        curses.doupdate()
-        return layout
+    # inner width = card_width - 2 (left + right borders)
+    inner = card_width - 2
 
-    now = time.time()
-    row = 0
-    table_x = 2  # left margin where the table starts
+    # Color attributes
+    if has_colors:
+        border_attr = card_attr(agent_idx, bold=True)
+        content_attr = curses.A_NORMAL
+    else:
+        border_attr = curses.A_BOLD
+        content_attr = curses.A_NORMAL
 
-    # ── Title ──
-    title = "Agent Status"
-    timestamp = time.strftime("%H:%M:%S")
-    title_line = f"  {title}"
-    ts_pos = max(0, max_x - len(timestamp) - 2)
-    safe_addstr(stdscr, row, 0, title_line, curses.A_BOLD)
-    safe_addstr(stdscr, row, ts_pos, timestamp, curses.A_DIM)
-    row += 2
+    if selected:
+        border_attr |= curses.A_REVERSE
 
-    # ── Collect data ──
-    agents = collect_agents(project_dir)
+    # ── Parse fields ──
+    agent_name = agent["agent"]
+    ticket_id = agent["ticket"]
+    summary = agent["summary"]
 
-    if not agents:
-        safe_addstr(stdscr, row, 2, "No active agents.")
-        stdscr.noutrefresh()
-        curses.doupdate()
-        return layout
+    try:
+        start_ts = int(agent["start_ts"])
+        updated_ago_secs = int(now - start_ts)
+    except (ValueError, TypeError):
+        updated_ago_secs = 0
 
-    # ── Prepare rows ──
-    tickets_raw = [a["ticket"] for a in agents]
-    tickets_stripped, _prefix = strip_ticket_prefix(tickets_raw)
+    last_desc, last_ago = format_last_action(agent["last_action"], now)
 
-    table_rows: list[list[str]] = []
-    for i, agent in enumerate(agents):
-        # Duration
-        try:
-            start = int(agent["start_ts"])
-            duration = elapsed_str(int(now - start))
-        except (ValueError, TypeError):
-            duration = agent["start_ts"]
+    stale = updated_ago_secs > STALE_THRESHOLD_SECONDS
+    if has_colors and stale:
+        updated_attr = curses.color_pair(COLOR_STALE) | curses.A_BOLD
+    elif stale:
+        updated_attr = curses.A_BOLD
+    else:
+        updated_attr = curses.A_DIM
 
-        # Last action
-        last_action = format_last_action(agent["last_action"], now)
+    # ── Top border: ┌─ <name> ─── <ticket> ─┐ ──
+    name_seg = f" {agent_name} "
+    ticket_seg = f" {ticket_id} "
+    # "┌─" + name_seg + dashes + ticket_seg + "─┐"
+    # total fixed chars: 2 + len(name_seg) + len(ticket_seg) + 2 = 4 + lens
+    fixed_chars = 4 + len(name_seg) + len(ticket_seg)
+    dash_fill = max(inner - fixed_chars, 1)
+    top_border = "┌─" + name_seg + "─" * dash_fill + ticket_seg + "─┐"
+    # Adjust if off by one due to rounding
+    if len(top_border) > card_width:
+        top_border = top_border[: card_width - 1] + "┐"
+    elif len(top_border) < card_width:
+        # Insert one more dash
+        top_border = "┌─" + name_seg + "─" * (dash_fill + 1) + ticket_seg + "─┐"
+        if len(top_border) > card_width:
+            top_border = top_border[: card_width - 1] + "┐"
 
-        table_rows.append(
-            [
-                agent["agent"],
-                tickets_stripped[i],
-                duration,
-                agent["summary"],
-                last_action,
-            ]
-        )
-
-    # ── Column widths ──
-    widths = compute_col_widths(max_x, user_widths)
-    ncols = len(widths)
-
-    # Compute separator x positions (interior separators between columns)
-    sep_xs = []
-    x = table_x  # start after left margin
-    x += 1  # skip the leading |
-    for ci in range(ncols - 1):
-        x += widths[ci]
-        sep_xs.append(x)  # this is the x of the | between col ci and ci+1
-        x += 1  # skip the | itself
-
-    layout["widths"] = widths
-    layout["sep_xs"] = sep_xs
-    layout["table_x"] = table_x
-
-    def hline(left: str, mid: str, right: str, fill: str) -> str:
-        parts = [left]
-        for ci in range(ncols):
-            parts.append(fill * widths[ci])
-            parts.append(mid if ci < ncols - 1 else right)
-        return "".join(parts)
-
-    top_border = hline("+", "+", "+", "-")
-    mid_border = hline("+", "+", "+", "-")
-    bot_border = hline("+", "+", "+", "-")
-
-    # ── Draw top border ──
-    safe_addstr(stdscr, row, table_x, top_border)
-    row += 1
-    if row >= max_y:
-        stdscr.noutrefresh()
-        curses.doupdate()
-        return layout
-
-    # ── Draw header row ──
-    layout["header_y"] = row
-    header_x = table_x
-    safe_addstr(stdscr, row, header_x, "|", curses.A_BOLD)
-    header_x += 1
-    for ci in range(ncols):
-        w = widths[ci]
-        text = truncate(HEADERS[ci], w - 2)
-        pad_total = w - len(text)
-        pad_left = pad_total // 2
-        pad_right = pad_total - pad_left
-        cell = " " * pad_left + text + " " * pad_right
-        safe_addstr(stdscr, row, header_x, cell, curses.A_BOLD)
-        header_x += w
-        # Draw separator — highlight if being dragged
-        sep_attr = curses.A_BOLD
-        if drag_sep is not None and ci < len(sep_xs) and ci == drag_sep:
-            sep_attr = curses.A_REVERSE | curses.A_BOLD
-        if ci < ncols - 1:
-            safe_addstr(stdscr, row, header_x, "|", sep_attr)
-        else:
-            safe_addstr(stdscr, row, header_x, "|", curses.A_BOLD)
-        header_x += 1
-    row += 1
-    if row >= max_y:
-        stdscr.noutrefresh()
-        curses.doupdate()
-        return layout
-
-    # ── Draw mid border ──
-    safe_addstr(stdscr, row, table_x, mid_border)
-    row += 1
-
-    # ── Draw data rows ──
-    for table_row in table_rows:
-        if row >= max_y:
-            break
-        line_x = table_x
-        safe_addstr(stdscr, row, line_x, "|")
-        line_x += 1
-        for ci in range(ncols):
-            w = widths[ci]
-            text = truncate(table_row[ci] if ci < len(table_row) else "", w - 2)
-            pad = w - len(text) - 1
-            cell = " " + text + " " * max(pad, 0)
-            safe_addstr(stdscr, row, line_x, cell)
-            line_x += w
-            # Highlight separator during drag
-            sep_attr = 0
-            if drag_sep is not None and ci < len(sep_xs) and ci == drag_sep:
-                sep_attr = curses.A_REVERSE
-            safe_addstr(stdscr, row, line_x, "|", sep_attr)
-            line_x += 1
-        row += 1
-
-    # ── Draw bottom border ──
     if row < max_y:
-        safe_addstr(stdscr, row, table_x, bot_border)
+        safe_addstr(stdscr, row, x, top_border[:card_width], border_attr)
+    row += 1
+
+    # ── Status row: │ Status: <summary>  │ ──
+    LABEL_S = "Status: "
+    val_avail = inner - 1 - len(LABEL_S)  # leading space takes 1 char
+    status_val = truncate(summary, max(val_avail, 0))
+    status_content = pad_right(" " + LABEL_S + status_val, inner)
+    if row < max_y:
+        safe_addstr(stdscr, row, x, "│", border_attr)
+        safe_addstr(stdscr, row, x + 1, status_content[:inner], content_attr)
+        safe_addstr(stdscr, row, x + 1 + inner, "│", border_attr)
+    row += 1
+
+    # ── Last action row: │ Last:   <desc>  (<ago>)  │ ──
+    LABEL_L = "Last:   "
+    ago_suffix = f" ({last_ago})" if last_ago else ""
+    val_avail_l = inner - 1 - len(LABEL_L)
+    desc_max = max(val_avail_l - len(ago_suffix), 4)
+    last_desc_t = truncate(last_desc, desc_max)
+    last_content = pad_right(" " + LABEL_L + last_desc_t + ago_suffix, inner)
+    if row < max_y:
+        safe_addstr(stdscr, row, x, "│", border_attr)
+        safe_addstr(stdscr, row, x + 1, last_content[:inner], content_attr)
+        safe_addstr(stdscr, row, x + 1 + inner, "│", border_attr)
+    row += 1
+
+    # ── Updated row: │ Updated: Xs ago  │ ──
+    LABEL_U = "Updated: "
+    updated_val = elapsed_str(updated_ago_secs) + " ago"
+    updated_content = pad_right(" " + LABEL_U + updated_val, inner)
+    if row < max_y:
+        safe_addstr(stdscr, row, x, "│", border_attr)
+        safe_addstr(stdscr, row, x + 1, updated_content[:inner], updated_attr)
+        safe_addstr(stdscr, row, x + 1 + inner, "│", border_attr)
+    row += 1
+
+    # ── Bottom border ──
+    bot_border = "└" + "─" * (card_width - 2) + "┘"
+    if row < max_y:
+        safe_addstr(stdscr, row, x, bot_border[:card_width], border_attr)
+    row += 1
+
+    # Blank gap between cards
+    row += 1
+
+    return row
+
+
+def render_detail_view(stdscr, agent: dict, now: float, has_colors: bool) -> None:
+    """Render a full-screen detail view for the selected agent."""
+    stdscr.erase()
+    max_y, max_x = stdscr.getmaxyx()
+
+    safe_addstr(stdscr, 0, 0, f"  Agent Detail: {agent['agent']}", curses.A_BOLD)
+    safe_addstr(stdscr, 1, 0, "  " + "─" * max(max_x - 4, 1))
+
+    row = 3
+
+    try:
+        start_ts = int(agent["start_ts"])
+        running = elapsed_str(int(now - start_ts))
+        updated = elapsed_str(int(now - start_ts)) + " ago"
+    except (ValueError, TypeError):
+        running = agent.get("start_ts", "?")
+        updated = "?"
+
+    last_desc, last_ago = format_last_action(agent["last_action"], now)
+    last_full = last_desc + (f" ({last_ago} ago)" if last_ago else "")
+
+    fields = [
+        ("Agent", agent["agent"]),
+        ("Ticket", agent["ticket"]),
+        ("Running", running),
+        ("Updated", updated),
+        ("Summary", agent["summary"]),
+        ("Last Action", last_full),
+    ]
+
+    for label, value in fields:
+        if row >= max_y - 2:
+            break
+        label_str = f"  {label:<14}: "
+        safe_addstr(stdscr, row, 0, label_str, curses.A_BOLD)
+        safe_addstr(stdscr, row, len(label_str),
+                    value[: max(max_x - len(label_str) - 1, 0)])
         row += 1
 
-    # ── Updated timestamp at bottom ──
     if row + 1 < max_y:
-        row += 1
-        hint = "  Drag column borders to resize"
-        updated = f"  Updated {time.strftime('%H:%M:%S')}"
-        safe_addstr(stdscr, row, 0, updated, curses.A_DIM)
-        hint_pos = max(0, max_x - len(hint) - 2)
-        safe_addstr(stdscr, row, hint_pos, hint, curses.A_DIM)
+        safe_addstr(stdscr, row + 1, 2, "Press any key to return", curses.A_DIM)
 
     stdscr.noutrefresh()
     curses.doupdate()
-    return layout
+
+
+def render(stdscr, project_dir: str, scroll_offset: int, selected_idx: int,
+           has_colors: bool) -> tuple[int, list[dict]]:
+    """Render a single frame of the card dashboard.
+
+    Returns (total_agent_count, agents_list).
+    """
+    stdscr.erase()
+    max_y, max_x = stdscr.getmaxyx()
+
+    if max_y < 4 or max_x < 20:
+        safe_addstr(stdscr, 0, 0, "Terminal too small")
+        stdscr.noutrefresh()
+        curses.doupdate()
+        return 0, []
+
+    now = time.time()
+
+    # ── Title bar ──
+    title = "Agent Status Dashboard"
+    timestamp = time.strftime("%H:%M:%S")
+    title_attr = (curses.color_pair(COLOR_TITLE) | curses.A_BOLD) if has_colors else curses.A_BOLD
+    ts_pos = max(0, max_x - len(timestamp) - 2)
+    safe_addstr(stdscr, 0, 0, f"  {title}", title_attr)
+    safe_addstr(stdscr, 0, ts_pos, timestamp, curses.A_DIM)
+
+    # ── Collect agents ──
+    agents = collect_agents(project_dir)
+
+    if not agents:
+        safe_addstr(stdscr, 2, 2, "No active agents.")
+        safe_addstr(stdscr, max_y - 1, 2, "q=quit  r=refresh", curses.A_DIM)
+        stdscr.noutrefresh()
+        curses.doupdate()
+        return 0, []
+
+    # Card fills terminal width minus margins
+    card_width = max(max_x - CARD_LEFT_MARGIN - 2, CARD_MIN_WIDTH)
+
+    # Content starts at row 2 (after title + blank line)
+    content_start = 2
+    current_draw_row = content_start
+
+    for i, agent in enumerate(agents):
+        # Compute where this card would draw on screen (accounting for scroll)
+        draw_row = current_draw_row - scroll_offset
+
+        # Skip if fully above viewport
+        if draw_row + CARD_HEIGHT <= 0:
+            current_draw_row += CARD_HEIGHT
+            continue
+
+        # Stop drawing once fully below viewport (leave room for status bar)
+        if draw_row >= max_y - 1:
+            break
+
+        selected = (i == selected_idx)
+        next_draw_row = render_card(
+            stdscr, draw_row, agent, i, card_width, now, selected, has_colors
+        )
+        current_draw_row += CARD_HEIGHT
+
+    # ── Status bar ──
+    hint = "j/k=navigate  enter=detail  r=refresh  q=quit"
+    count_str = f"  {len(agents)} agent{'s' if len(agents) != 1 else ''}"
+    hint_pos = max(0, max_x - len(hint) - 2)
+    safe_addstr(stdscr, max_y - 1, 0, count_str, curses.A_DIM)
+    safe_addstr(stdscr, max_y - 1, hint_pos, hint, curses.A_DIM)
+
+    stdscr.noutrefresh()
+    curses.doupdate()
+    return len(agents), agents
 
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
-def find_separator(x: int, sep_xs: list[int], tolerance: int = 1) -> int | None:
-    """Find the separator index closest to x within tolerance.
-
-    Returns the separator index (0-based, between col i and col i+1) or None.
-    """
-    for i, sx in enumerate(sep_xs):
-        if abs(x - sx) <= tolerance:
-            return i
-    return None
-
-
 def main(stdscr) -> None:
-    # Determine project directory: prefer explicit arg, else walk up to
-    # find .agent-status.d or .git, else use cwd.
     if len(sys.argv) > 1:
         project_dir = sys.argv[1]
     else:
         project_dir = os.getcwd()
 
-    curses.curs_set(0)  # Hide cursor
-    curses.use_default_colors()  # Transparent background
+    curses.curs_set(0)
+    has_colors = init_colors()
     curses.halfdelay(REFRESH_HALFDELAY_TENTHS)
 
-    # Enable mouse events for column resizing
-    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
-    # Enable mouse-movement reporting so we get drag events
-    # (xterm-style: \033[?1003h enables all-motion tracking)
-    sys.stdout.write("\033[?1003h")
-    sys.stdout.flush()
-
-    # Persistent user column widths — survives across refresh cycles
-    user_widths: dict[int, int] = {}
-
-    # Drag state
-    drag_sep: int | None = None  # which separator index is being dragged
-    drag_start_x: int = 0  # mouse x when drag started
-    drag_start_widths: list[int] = []  # snapshot of widths when drag started
-
-    # Layout from last render
-    layout: dict = {"header_y": -1, "sep_xs": [], "widths": [], "table_x": 2}
+    scroll_offset = 0   # how many rows the view is scrolled down
+    selected_idx = 0    # which agent card is highlighted
+    in_detail = False
+    detail_agent: dict | None = None
 
     while True:
-        layout = render(stdscr, project_dir, user_widths, drag_sep)
-        try:
-            key = stdscr.getch()
-        except curses.error:
-            continue
+        now = time.time()
 
-        if key == ord("q") or key == ord("Q"):
-            break
-        elif key == curses.KEY_RESIZE:
-            curses.update_lines_cols()
-            continue
-        elif key == curses.KEY_MOUSE:
+        if in_detail and detail_agent is not None:
+            render_detail_view(stdscr, detail_agent, now, has_colors)
             try:
-                _, mx, my, _, bstate = curses.getmouse()
+                key = stdscr.getch()
             except curses.error:
                 continue
 
-            sep_xs = layout.get("sep_xs", [])
-            header_y = layout.get("header_y", -1)
-            cur_widths = layout.get("widths", [])
+            if key == -1:
+                continue  # timeout — keep refreshing detail
+            elif key == curses.KEY_RESIZE:
+                curses.update_lines_cols()
+            else:
+                in_detail = False
+                detail_agent = None
 
-            if bstate & curses.BUTTON1_PRESSED:
-                # Start drag if clicking near a separator
-                sep_idx = find_separator(mx, sep_xs)
-                if sep_idx is not None:
-                    drag_sep = sep_idx
-                    drag_start_x = mx
-                    drag_start_widths = list(cur_widths)
+        else:
+            total, agents = render(
+                stdscr, project_dir, scroll_offset, selected_idx, has_colors
+            )
 
-            elif bstate & curses.BUTTON1_RELEASED:
-                # End drag
-                if drag_sep is not None:
-                    drag_sep = None
+            try:
+                key = stdscr.getch()
+            except curses.error:
+                continue
 
-            elif drag_sep is not None:
-                # Mouse motion during drag — resize columns
-                dx = mx - drag_start_x
-                if dx != 0 and drag_start_widths:
-                    left_col = drag_sep
-                    right_col = drag_sep + 1
-                    if left_col < len(drag_start_widths) and right_col < len(drag_start_widths):
-                        new_left = drag_start_widths[left_col] + dx
-                        new_right = drag_start_widths[right_col] - dx
-                        # Enforce minimum widths
-                        if new_left >= MIN_COL_WIDTH and new_right >= MIN_COL_WIDTH:
-                            user_widths[left_col] = new_left
-                            user_widths[right_col] = new_right
+            if key == ord("q") or key == ord("Q"):
+                break
 
-        elif key == ord("r") or key == ord("R"):
-            # Reset column widths to auto
-            user_widths.clear()
-        # Any other key or timeout (-1): just re-render
+            elif key == curses.KEY_RESIZE:
+                curses.update_lines_cols()
 
-    # Disable mouse-motion reporting on exit
-    sys.stdout.write("\033[?1003l")
-    sys.stdout.flush()
+            elif key in (ord("j"), curses.KEY_DOWN):
+                if total > 0:
+                    selected_idx = min(selected_idx + 1, total - 1)
+                    # Scroll to keep selected card visible
+                    max_y, _ = stdscr.getmaxyx()
+                    visible_cards = max(1, (max_y - 3) // CARD_HEIGHT)
+                    if selected_idx >= scroll_offset + visible_cards:
+                        scroll_offset = selected_idx - visible_cards + 1
+
+            elif key in (ord("k"), curses.KEY_UP):
+                if total > 0:
+                    selected_idx = max(selected_idx - 1, 0)
+                    if selected_idx < scroll_offset:
+                        scroll_offset = selected_idx
+
+            elif key in (ord("\n"), curses.KEY_ENTER, 10, 13):
+                if agents and 0 <= selected_idx < len(agents):
+                    in_detail = True
+                    detail_agent = agents[selected_idx]
+
+            elif key in (ord("r"), ord("R")):
+                scroll_offset = 0
+                selected_idx = 0
+            # timeout (-1) or unrecognized key: re-render on next loop
 
 
 if __name__ == "__main__":
