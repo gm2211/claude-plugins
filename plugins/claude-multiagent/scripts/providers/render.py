@@ -3,10 +3,17 @@
 
 import json
 import os
+import ssl
 import sys
 import urllib.request
 import urllib.error
 from datetime import datetime
+
+try:
+    import certifi
+    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CONTEXT = None
 
 RENDER_API_BASE = "https://api.render.com/v1"
 TIMEOUT = 10
@@ -41,7 +48,7 @@ def api_get(path, api_key):
         "Accept": "application/json",
     })
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT, context=SSL_CONTEXT) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""
