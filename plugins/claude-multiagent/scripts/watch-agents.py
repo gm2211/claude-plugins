@@ -17,6 +17,7 @@ import time
 
 STATUS_DIR = ".agent-status.d"
 REFRESH_HALFDELAY_TENTHS = 20  # curses half-delay: 2 seconds
+MIN_COL_WIDTH = 8  # minimum column width when resizing
 
 FIXED_COLS = [
     ("Agent", 15),
@@ -187,11 +188,14 @@ def collect_agents(project_dir: str) -> list[dict]:
 
 # ── Column width calculation ─────────────────────────────────────────────
 
-def compute_col_widths(term_width: int) -> list[int]:
+def compute_col_widths(term_width: int, user_widths: dict[int, int] | None = None) -> list[int]:
     """Compute column widths to fill the full terminal width.
 
     Fixed columns: Agent (15), Ticket(s) (12), Duration (12)
     Flex columns: Summary (55%), Last Action (45%) of remaining space.
+
+    If user_widths is provided, those columns use the user-specified widths
+    and the remaining flex space is distributed among non-overridden columns.
     """
     ncols = len(HEADERS)
     border_chars = ncols + 1  # one | per column boundary plus edges
@@ -210,13 +214,22 @@ def compute_col_widths(term_width: int) -> list[int]:
 
     widths = fixed_widths + flex_widths
 
+    # Apply user overrides
+    if user_widths:
+        for col_idx, w in user_widths.items():
+            if 0 <= col_idx < ncols:
+                widths[col_idx] = max(w, MIN_COL_WIDTH)
+
     # Final shrink pass if we exceed target width
     target = term_width - padding
     total = sum(widths) + border_chars
     while total > target:
-        # Shrink widest column
-        widest = max(range(ncols), key=lambda i: widths[i])
-        if widths[widest] <= 5:
+        # Shrink widest column that isn't user-pinned
+        candidates = [i for i in range(ncols) if not (user_widths and i in user_widths)]
+        if not candidates:
+            candidates = list(range(ncols))
+        widest = max(candidates, key=lambda i: widths[i])
+        if widths[widest] <= MIN_COL_WIDTH:
             break
         widths[widest] -= 1
         total -= 1
@@ -251,19 +264,29 @@ def safe_addstr(win, y: int, x: int, text: str, attr: int = 0):
         pass
 
 
-def render(stdscr, project_dir: str) -> None:
-    """Render a single frame of the dashboard."""
+def render(stdscr, project_dir: str, user_widths: dict[int, int] | None = None,
+           drag_sep: int | None = None) -> dict:
+    """Render a single frame of the dashboard.
+
+    Returns a dict with layout info for mouse hit-testing:
+        header_y: int — the y coordinate of the header row
+        sep_xs: list[int] — x coordinates of each interior column separator
+        widths: list[int] — the column widths used for this frame
+        table_x: int — the x offset where the table starts
+    """
     stdscr.erase()
+    layout = {"header_y": -1, "sep_xs": [], "widths": [], "table_x": 2}
 
     max_y, max_x = stdscr.getmaxyx()
     if max_y < 3 or max_x < 20:
         safe_addstr(stdscr, 0, 0, "Terminal too small")
         stdscr.noutrefresh()
         curses.doupdate()
-        return
+        return layout
 
     now = time.time()
     row = 0
+    table_x = 2  # left margin where the table starts
 
     # ── Title ──
     title = "Agent Status"
@@ -281,7 +304,7 @@ def render(stdscr, project_dir: str) -> None:
         safe_addstr(stdscr, row, 2, "No active agents.")
         stdscr.noutrefresh()
         curses.doupdate()
-        return
+        return layout
 
     # ── Prepare rows ──
     tickets_raw = [a["ticket"] for a in agents]
@@ -310,8 +333,21 @@ def render(stdscr, project_dir: str) -> None:
         )
 
     # ── Column widths ──
-    widths = compute_col_widths(max_x)
+    widths = compute_col_widths(max_x, user_widths)
     ncols = len(widths)
+
+    # Compute separator x positions (interior separators between columns)
+    sep_xs = []
+    x = table_x  # start after left margin
+    x += 1  # skip the leading |
+    for ci in range(ncols - 1):
+        x += widths[ci]
+        sep_xs.append(x)  # this is the x of the | between col ci and ci+1
+        x += 1  # skip the | itself
+
+    layout["widths"] = widths
+    layout["sep_xs"] = sep_xs
+    layout["table_x"] = table_x
 
     def hline(left: str, mid: str, right: str, fill: str) -> str:
         parts = [left]
@@ -325,62 +361,99 @@ def render(stdscr, project_dir: str) -> None:
     bot_border = hline("+", "+", "+", "-")
 
     # ── Draw top border ──
-    safe_addstr(stdscr, row, 2, top_border)
+    safe_addstr(stdscr, row, table_x, top_border)
     row += 1
     if row >= max_y:
         stdscr.noutrefresh()
         curses.doupdate()
-        return
+        return layout
 
     # ── Draw header row ──
-    header_line = "|"
+    layout["header_y"] = row
+    header_x = table_x
+    safe_addstr(stdscr, row, header_x, "|", curses.A_BOLD)
+    header_x += 1
     for ci in range(ncols):
         w = widths[ci]
         text = truncate(HEADERS[ci], w - 2)
         pad_total = w - len(text)
         pad_left = pad_total // 2
         pad_right = pad_total - pad_left
-        header_line += " " * pad_left + text + " " * pad_right + "|"
-    safe_addstr(stdscr, row, 2, header_line, curses.A_BOLD)
+        cell = " " * pad_left + text + " " * pad_right
+        safe_addstr(stdscr, row, header_x, cell, curses.A_BOLD)
+        header_x += w
+        # Draw separator — highlight if being dragged
+        sep_attr = curses.A_BOLD
+        if drag_sep is not None and ci < len(sep_xs) and ci == drag_sep:
+            sep_attr = curses.A_REVERSE | curses.A_BOLD
+        if ci < ncols - 1:
+            safe_addstr(stdscr, row, header_x, "|", sep_attr)
+        else:
+            safe_addstr(stdscr, row, header_x, "|", curses.A_BOLD)
+        header_x += 1
     row += 1
     if row >= max_y:
         stdscr.noutrefresh()
         curses.doupdate()
-        return
+        return layout
 
     # ── Draw mid border ──
-    safe_addstr(stdscr, row, 2, mid_border)
+    safe_addstr(stdscr, row, table_x, mid_border)
     row += 1
 
     # ── Draw data rows ──
     for table_row in table_rows:
         if row >= max_y:
             break
-        line = "|"
+        line_x = table_x
+        safe_addstr(stdscr, row, line_x, "|")
+        line_x += 1
         for ci in range(ncols):
             w = widths[ci]
             text = truncate(table_row[ci] if ci < len(table_row) else "", w - 2)
             pad = w - len(text) - 1
-            line += " " + text + " " * max(pad, 0) + "|"
-        safe_addstr(stdscr, row, 2, line)
+            cell = " " + text + " " * max(pad, 0)
+            safe_addstr(stdscr, row, line_x, cell)
+            line_x += w
+            # Highlight separator during drag
+            sep_attr = 0
+            if drag_sep is not None and ci < len(sep_xs) and ci == drag_sep:
+                sep_attr = curses.A_REVERSE
+            safe_addstr(stdscr, row, line_x, "|", sep_attr)
+            line_x += 1
         row += 1
 
     # ── Draw bottom border ──
     if row < max_y:
-        safe_addstr(stdscr, row, 2, bot_border)
+        safe_addstr(stdscr, row, table_x, bot_border)
         row += 1
 
     # ── Updated timestamp at bottom ──
     if row + 1 < max_y:
         row += 1
+        hint = "  Drag column borders to resize"
         updated = f"  Updated {time.strftime('%H:%M:%S')}"
         safe_addstr(stdscr, row, 0, updated, curses.A_DIM)
+        hint_pos = max(0, max_x - len(hint) - 2)
+        safe_addstr(stdscr, row, hint_pos, hint, curses.A_DIM)
 
     stdscr.noutrefresh()
     curses.doupdate()
+    return layout
 
 
 # ── Main loop ────────────────────────────────────────────────────────────
+
+def find_separator(x: int, sep_xs: list[int], tolerance: int = 1) -> int | None:
+    """Find the separator index closest to x within tolerance.
+
+    Returns the separator index (0-based, between col i and col i+1) or None.
+    """
+    for i, sx in enumerate(sep_xs):
+        if abs(x - sx) <= tolerance:
+            return i
+    return None
+
 
 def main(stdscr) -> None:
     # Determine project directory: prefer explicit arg, else walk up to
@@ -394,8 +467,26 @@ def main(stdscr) -> None:
     curses.use_default_colors()  # Transparent background
     curses.halfdelay(REFRESH_HALFDELAY_TENTHS)
 
+    # Enable mouse events for column resizing
+    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+    # Enable mouse-movement reporting so we get drag events
+    # (xterm-style: \033[?1003h enables all-motion tracking)
+    sys.stdout.write("\033[?1003h")
+    sys.stdout.flush()
+
+    # Persistent user column widths — survives across refresh cycles
+    user_widths: dict[int, int] = {}
+
+    # Drag state
+    drag_sep: int | None = None  # which separator index is being dragged
+    drag_start_x: int = 0  # mouse x when drag started
+    drag_start_widths: list[int] = []  # snapshot of widths when drag started
+
+    # Layout from last render
+    layout: dict = {"header_y": -1, "sep_xs": [], "widths": [], "table_x": 2}
+
     while True:
-        render(stdscr, project_dir)
+        layout = render(stdscr, project_dir, user_widths, drag_sep)
         try:
             key = stdscr.getch()
         except curses.error:
@@ -406,7 +497,51 @@ def main(stdscr) -> None:
         elif key == curses.KEY_RESIZE:
             curses.update_lines_cols()
             continue
+        elif key == curses.KEY_MOUSE:
+            try:
+                _, mx, my, _, bstate = curses.getmouse()
+            except curses.error:
+                continue
+
+            sep_xs = layout.get("sep_xs", [])
+            header_y = layout.get("header_y", -1)
+            cur_widths = layout.get("widths", [])
+
+            if bstate & curses.BUTTON1_PRESSED:
+                # Start drag if clicking near a separator
+                sep_idx = find_separator(mx, sep_xs)
+                if sep_idx is not None:
+                    drag_sep = sep_idx
+                    drag_start_x = mx
+                    drag_start_widths = list(cur_widths)
+
+            elif bstate & curses.BUTTON1_RELEASED:
+                # End drag
+                if drag_sep is not None:
+                    drag_sep = None
+
+            elif drag_sep is not None:
+                # Mouse motion during drag — resize columns
+                dx = mx - drag_start_x
+                if dx != 0 and drag_start_widths:
+                    left_col = drag_sep
+                    right_col = drag_sep + 1
+                    if left_col < len(drag_start_widths) and right_col < len(drag_start_widths):
+                        new_left = drag_start_widths[left_col] + dx
+                        new_right = drag_start_widths[right_col] - dx
+                        # Enforce minimum widths
+                        if new_left >= MIN_COL_WIDTH and new_right >= MIN_COL_WIDTH:
+                            user_widths[left_col] = new_left
+                            user_widths[right_col] = new_right
+
+        elif key == ord("r") or key == ord("R"):
+            # Reset column widths to auto
+            user_widths.clear()
         # Any other key or timeout (-1): just re-render
+
+    # Disable mouse-motion reporting on exit
+    sys.stdout.write("\033[?1003l")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":
