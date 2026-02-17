@@ -2,7 +2,7 @@
 """Agent status dashboard — curses TUI.
 
 Reads per-agent status files from .agent-status.d/ and renders a
-full-width Unicode table with auto-refresh.  Replaces watch-agents.sh.
+full-width ASCII table with auto-refresh.  Replaces watch-agents.sh.
 
 Status file format (one TSV line per file):
     <agent>\t<ticket>\t<unix-ts>\t<summary>\t<last-action>|<unix-ts>
@@ -230,8 +230,8 @@ def truncate(text: str, max_len: int) -> str:
     """Truncate text with ellipsis if it exceeds max_len."""
     if len(text) <= max_len:
         return text
-    if max_len >= 2:
-        return text[: max_len - 1] + "\u2026"
+    if max_len >= 3:
+        return text[: max_len - 2] + ".."
     return text[:max_len]
 
 
@@ -320,9 +320,9 @@ def render(stdscr, project_dir: str) -> None:
             parts.append(mid if ci < ncols - 1 else right)
         return "".join(parts)
 
-    top_border = hline("\u250c", "\u252c", "\u2510", "\u2500")
-    mid_border = hline("\u251c", "\u253c", "\u2524", "\u2500")
-    bot_border = hline("\u2514", "\u2534", "\u2518", "\u2500")
+    top_border = hline("+", "+", "+", "-")
+    mid_border = hline("+", "+", "+", "-")
+    bot_border = hline("+", "+", "+", "-")
 
     # ── Draw top border ──
     safe_addstr(stdscr, row, 2, top_border)
@@ -333,14 +333,14 @@ def render(stdscr, project_dir: str) -> None:
         return
 
     # ── Draw header row ──
-    header_line = "\u2502"
+    header_line = "|"
     for ci in range(ncols):
         w = widths[ci]
         text = truncate(HEADERS[ci], w - 2)
         pad_total = w - len(text)
         pad_left = pad_total // 2
         pad_right = pad_total - pad_left
-        header_line += " " * pad_left + text + " " * pad_right + "\u2502"
+        header_line += " " * pad_left + text + " " * pad_right + "|"
     safe_addstr(stdscr, row, 2, header_line, curses.A_BOLD)
     row += 1
     if row >= max_y:
@@ -356,12 +356,12 @@ def render(stdscr, project_dir: str) -> None:
     for table_row in table_rows:
         if row >= max_y:
             break
-        line = "\u2502"
+        line = "|"
         for ci in range(ncols):
             w = widths[ci]
             text = truncate(table_row[ci] if ci < len(table_row) else "", w - 2)
             pad = w - len(text) - 1
-            line += " " + text + " " * max(pad, 0) + "\u2502"
+            line += " " + text + " " * max(pad, 0) + "|"
         safe_addstr(stdscr, row, 2, line)
         row += 1
 
