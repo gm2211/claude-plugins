@@ -80,11 +80,50 @@ Use **teams** (TeamCreate) so you can message agents mid-flight via SendMessage.
 - **Max concurrent agents:** On first dispatch of each session, ask the user how many concurrent agents to allow (suggest 5 as default). Respect this limit for the rest of the session.
 - **Before first dispatch:** Ensure `.agent-status.d/` directory exists (create it if needed). On request, read files in `.agent-status.d/` to provide a verbal status table to the user.
 - Agent config: model `claude-opus-4-6` or more powerful, type: `general-purpose`, mode: `bypassPermissions`
-- Each agent works in its own **git worktree** inside `.worktrees/` (must be gitignored). This keeps worktrees within the sandbox so sub-agents have full file access. **Always use `bd worktree`** instead of raw `git worktree` — it auto-configures beads redirect files so issues stay scoped correctly.
-  ```bash
-  bd worktree create .worktrees/<branch> --branch <branch>
-  cd .worktrees/<branch> && npm ci  # or your project's install command
-  ```
+
+### Worktree & Beads Scoping
+
+Each **feature** gets its own **principal worktree** branched off the integration branch. Beads are scoped to this principal worktree — not to `main`, and not to individual sub-worktrees.
+
+**Structure:**
+
+```
+repo/                          # main branch — never developed against directly
+├── .worktrees/
+│   ├── feature-a/             # principal worktree (feature-a branch)
+│   │   ├── .beads/            # beads scoped to feature-a
+│   │   └── .worktrees/
+│   │       ├── feature-a-ui/  # sub-worktree spun up by a sub-agent
+│   │       └── feature-a-api/ # another sub-worktree
+│   └── feature-b/             # principal worktree (feature-b branch)
+│       ├── .beads/            # beads scoped to feature-b
+│       └── ...
+```
+
+**Rules:**
+
+1. **Never develop against `main` directly.** Create a principal worktree for each feature/bug.
+2. **Beads live in the principal worktree.** Run `bd init` in the principal worktree. All tickets for that feature are tracked there.
+3. **Sub-agents spin up further worktrees from the principal worktree** (not from `main`). Use `bd worktree create` from within the principal worktree so beads redirect files resolve correctly.
+4. **Merging flow:** Sub-agent worktree → principal worktree (coordinator merges) → `main` (when feature is complete).
+
+**Setup for a new feature:**
+
+```bash
+# Coordinator creates the principal worktree
+bd worktree create .worktrees/<feature-branch> --branch <feature-branch>
+cd .worktrees/<feature-branch>
+bd init && git config beads.role maintainer
+npm ci  # or your project's install command
+```
+
+**Sub-agent worktree (from within principal worktree):**
+
+```bash
+bd worktree create .worktrees/<sub-branch> --branch <sub-branch>
+cd .worktrees/<sub-branch> && npm ci
+```
+
 - Prompt must include: bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build commands, and the **reporting instructions** below
 - **Course-correction:** Use `SendMessage` to nudge stuck agents (e.g., "check git history" or "focus on file X"). When course-correcting, also: (1) create a bd ticket for the additional work, and (2) update the agent's status file in `.agent-status.d/<agent-name>` immediately to reflect the new scope.
 
@@ -208,16 +247,25 @@ The monitor serves two functions:
 
 ## Merging & Cleanup
 
-You own merging completed work to the integration branch (default: main). Review the diff, sanity check, merge, push. Handle conflicts yourself unless genuinely ambiguous.
+Merging happens in **two stages:**
 
-**After every merge, immediately clean up:**
+1. **Sub-agent worktree → principal worktree:** After a sub-agent completes a ticket, merge its work into the principal feature worktree. Review the diff, sanity check, merge. Handle conflicts yourself unless genuinely ambiguous.
+2. **Principal worktree → main:** When the entire feature is complete (all beads closed, tests passing), merge the principal worktree into `main` and push.
 
-1. `bd worktree remove .worktrees/<branch>`
-2. `git branch -d <branch>`
+### After merging a sub-agent's work (stage 1):
+
+1. `bd worktree remove .worktrees/<sub-branch>` (from within the principal worktree)
+2. `git branch -d <sub-branch>`
 3. `rm -f .agent-status.d/<agent-name>`
 4. `bd close <id> --reason "..."`
-5. **Changelog entry:** If the merged work is user-visible or notable (new feature, bug fix, breaking change), delegate a changelog update to a sub-agent. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Deprecated, Removed, Fixed, Security) in `CHANGELOG.md` at the repo root. Skip for purely internal refactors or trivial changes.
-6. **Verify:** `git worktree list` shows only active work; `bd list` has no stale open tickets
+5. **Verify:** `git worktree list` shows only active work; `bd list` has no stale open tickets
+
+### After completing a feature (stage 2):
+
+1. From the repo root, merge the principal branch into `main`
+2. `bd worktree remove .worktrees/<feature-branch>`
+3. `git branch -d <feature-branch>`
+4. **Changelog entry:** If the merged work is user-visible or notable (new feature, bug fix, breaking change), delegate a changelog update to a sub-agent. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Deprecated, Removed, Fixed, Security) in `CHANGELOG.md` at the repo root. Skip for purely internal refactors or trivial changes.
 
 Do not let worktrees or tickets accumulate.
 
