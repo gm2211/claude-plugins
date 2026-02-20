@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open Zellij dashboard panes for beads (tickets), agent status, and deploy watch.
+# Open Zellij dashboard panes for beads (neovim) and deploy watch.
 # Called by both the SessionStart hook and the agents-dashboard skill.
 # Fails silently when not running inside Zellij.
 #
@@ -201,13 +201,11 @@ done
 # Uses pane name= attribute, command=, and args for robust detection.
 # This catches both new named panes and old unnamed panes from cached
 # plugin versions running watch-*.py from any path.
-has_beads=$(has_dashboard_pane "$focused_tab" "dashboard-beads" "beads_tui" "$PROJECT_DIR")
-has_agents=$(has_dashboard_pane "$focused_tab" "dashboard-agents" "watch-agents.py" "$PROJECT_DIR")
+has_beads=$(has_dashboard_pane "$focused_tab" "dashboard-beads" "nvim" "$PROJECT_DIR")
 has_deploys=$(has_dashboard_pane "$focused_tab" "dashboard-deploys" "watch-deploys.py" "$PROJECT_DIR")
 
 all_present=true
 [[ "$has_beads" -eq 0 ]] && all_present=false
-[[ "$has_agents" -eq 0 ]] && all_present=false
 if $deploy_pane_enabled && [[ "$has_deploys" -eq 0 ]]; then
   all_present=false
 fi
@@ -221,90 +219,45 @@ fi
 # only the processes belonging to THIS tab's dashboard panes.
 DASH_ID=$(uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]' | head -c 8)
 
-# Open missing panes. The target layout has all three dashboard panes
+# Open missing panes. The target layout has both dashboard panes
 # stacked vertically on the RIGHT side:
 #
 #   ┌──────────────┬────────────────┐
-#   │              │  watch-beads   │
-#   │              ├────────────────┤
-#   │   Claude     │  watch-agents  │
-#   │              ├────────────────┤
+#   │              │  beads (nvim)  │
+#   │   Claude     ├────────────────┤
 #   │              │  watch-deploys │
 #   └──────────────┴────────────────┘
 #
 # new-pane moves focus to the newly created pane, so we track where
 # focus ends up after each step.
 
-# Launch panes in parallel. Each pane creation block runs in a background
-# subshell with a small stagger to preserve spatial layout ordering (each
-# new-pane is placed relative to the currently focused pane).
-
 if [[ "$has_beads" -eq 0 ]]; then
-  # Create beads pane to the right of Claude. Focus moves to beads.
-  BEADS_TUI_DIR="${SCRIPT_DIR}/beads-tui"
-  BDT_ARGS=(--db-path "${PROJECT_DIR}/.beads/beads.db" --bd-path "$(command -v bd)")
-
-  # When running from the plugin cache the git submodule directory is empty.
-  # Try the source repo's copy of the submodule as a fallback.
-  if [[ ! -d "${BEADS_TUI_DIR}/beads_tui" ]]; then
-    # Walk up from SCRIPT_DIR to find the plugin root, then look for the
-    # source checkout (e.g. <repo>/plugins/claude-multiagent/scripts/beads-tui).
-    _candidate="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
-    if [[ -z "$_candidate" ]]; then
-      # SCRIPT_DIR is in the cache (not a git repo).  Try the PROJECT_DIR
-      # repo which may contain the plugin source as a submodule / subtree.
-      _candidate="$(cd "${PROJECT_DIR}" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
-    fi
-    if [[ -n "$_candidate" && -d "${_candidate}/plugins/claude-multiagent/scripts/beads-tui/beads_tui" ]]; then
-      BEADS_TUI_DIR="${_candidate}/plugins/claude-multiagent/scripts/beads-tui"
-    fi
-  fi
-
-  if [[ -d "${BEADS_TUI_DIR}/beads_tui" ]]; then
-    # Bundled submodule — run as python module with PYTHONPATH
+  # Create beads pane to the right of Claude using neovim with the beads plugin.
+  # Focus moves to beads pane.
+  NVIM_PATH="$(command -v nvim 2>/dev/null || true)"
+  if [[ -n "$NVIM_PATH" ]]; then
     zellij action new-pane --name "dashboard-beads-${DASH_ID}" --close-on-exit --direction right \
-      -- env PYTHONPATH="${BEADS_TUI_DIR}" python3 -m beads_tui "${BDT_ARGS[@]}" 2>/dev/null || true
-  elif command -v bdt &>/dev/null; then
-    # System-installed bdt — use full resolved path so Zellij can find it
-    BDT_PATH="$(command -v bdt)"
-    zellij action new-pane --name "dashboard-beads-${DASH_ID}" --close-on-exit --direction right \
-      -- "$BDT_PATH" "${BDT_ARGS[@]}" 2>/dev/null || true
+      -- "$NVIM_PATH" -c "lua require('beads').open()" 2>/dev/null || true
   else
-    # Neither available — show placeholder with install instructions
+    # Neovim not available — show placeholder
     zellij action new-pane --name "dashboard-beads-${DASH_ID}" --close-on-exit --direction right \
-      -- bash -c 'echo ""; echo "  beads-tui (bdt) is not installed."; echo ""; echo "  Install it with:"; echo "    pipx install beads-tui"; echo ""; echo "  Press Enter to close this pane."; read' 2>/dev/null || true
+      -- bash -c 'echo ""; echo "  Neovim (nvim) is not installed."; echo ""; echo "  Install it to use the beads dashboard."; echo ""; echo "  Press Enter to close this pane."; read' 2>/dev/null || true
   fi
 fi
 
-# The remaining panes split the right column downward; launch them in parallel.
-# If beads already occupies the right column, agents/deploys split it downward.
-# If beads is absent, the FIRST new pane must create the right column itself.
+# The deploy pane splits the right column downward.
+# If beads already occupies the right column, deploys splits it downward.
+# If beads is absent, the deploy pane must create the right column itself.
 {
   # Track whether a right-side pane exists.  If beads was missing we just
   # created it in the foreground block above, so a right pane now exists
   # regardless of the original detection value.
   has_right_pane=1
 
-  if [[ "$has_agents" -eq 0 ]]; then
-    if [[ "$has_right_pane" -eq 1 ]]; then
-      # Right column exists — split it downward.
-      zellij action move-focus right 2>/dev/null || true
-      zellij action new-pane --name "dashboard-agents-${DASH_ID}" --close-on-exit --direction down \
-        -- python3 "${SCRIPT_DIR}/watch-agents.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
-    else
-      # No right column yet — create agents to the right of Claude.
-      zellij action new-pane --name "dashboard-agents-${DASH_ID}" --close-on-exit --direction right \
-        -- python3 "${SCRIPT_DIR}/watch-agents.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
-    fi
-    has_right_pane=1
-    # Focus is now on the agents pane.
-  fi
-
   if $deploy_pane_enabled && [[ "$has_deploys" -eq 0 ]]; then
     if [[ "$has_right_pane" -eq 1 ]]; then
       # Right column exists — move to the bottom-most pane and split downward.
       zellij action move-focus right 2>/dev/null || true
-      zellij action move-focus down 2>/dev/null || true
       zellij action move-focus down 2>/dev/null || true
       zellij action new-pane --name "dashboard-deploys-${DASH_ID}" --close-on-exit --direction down \
         -- python3 "${SCRIPT_DIR}/watch-deploys.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
@@ -318,5 +271,5 @@ fi
   # Return focus to the original (left) pane where Claude runs
   zellij action move-focus left 2>/dev/null || true
 } &
-# No wait — let agents+deploys panes finish in the background while the
+# No wait — let deploy pane finish in the background while the
 # session-start hook continues to produce its JSON output.
