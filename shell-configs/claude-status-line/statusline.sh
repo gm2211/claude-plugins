@@ -9,6 +9,17 @@ DIR=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
 ADDED=$(echo "$input" | jq -r '.cost.total_lines_added // 0')
 REMOVED=$(echo "$input" | jq -r '.cost.total_lines_removed // 0')
 
+# Sandbox mode — read from input JSON first, fall back to settings.json
+SANDBOX_ENABLED=$(echo "$input" | jq -r '.sandbox.enabled // empty' 2>/dev/null)
+SANDBOX_MODE=$(echo "$input" | jq -r '.sandbox.mode // empty' 2>/dev/null)
+if [ -z "$SANDBOX_ENABLED" ]; then
+    SETTINGS="$HOME/.claude/settings.json"
+    if [ -f "$SETTINGS" ]; then
+        SANDBOX_ENABLED=$(jq -r '.sandbox.enabled // empty' "$SETTINGS" 2>/dev/null)
+        SANDBOX_MODE=$(jq -r '.sandbox.mode // empty' "$SETTINGS" 2>/dev/null)
+    fi
+fi
+
 # Current time
 TIME=$(date '+%H:%M')
 
@@ -59,5 +70,19 @@ if [ "$ADDED" -gt 0 ] || [ "$REMOVED" -gt 0 ]; then
     SESSION_CHANGES=" \033[32m+${ADDED}\033[0m\033[31m-${REMOVED}\033[0m"
 fi
 
+# Sandbox indicator
+SANDBOX_STR=""
+if [ "$SANDBOX_ENABLED" = "true" ]; then
+    # Friendly label for known mode values
+    case "$SANDBOX_MODE" in
+        auto-allow)  MODE_LABEL="auto" ;;
+        manual)      MODE_LABEL="manual" ;;
+        *)           MODE_LABEL="${SANDBOX_MODE:-on}" ;;
+    esac
+    SANDBOX_STR=" \033[90m|\033[0m \033[35msandbox:${MODE_LABEL}\033[0m"
+elif [ "$SANDBOX_ENABLED" = "false" ]; then
+    SANDBOX_STR=" \033[90m|\033[0m \033[90msandbox:off\033[0m"
+fi
+
 # Output single line
-echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m \033[90m|\033[0m ${BAR} ${PCT}%${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
+echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR} \033[90m|\033[0m ${BAR} ${PCT}%${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
