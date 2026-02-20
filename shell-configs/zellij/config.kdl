@@ -134,6 +134,7 @@ keybinds clear-defaults=true {
         }
     }
     shared_except "locked" {
+        bind "Super c" { Copy; }
         // Alt+arrow unbound to allow terminal word navigation
         // bind "Alt left" { MoveFocusOrTab "left"; }
         // bind "Alt down" { MoveFocus "down"; }
@@ -195,7 +196,6 @@ keybinds clear-defaults=true {
         bind "up" { ScrollUp; }
         bind "right" { PageScrollDown; }
         // bind "Super b" { PageScrollUp; }  // unbound — conflicts with Claude Code
-        bind "Super c" { ScrollToBottom; SwitchToMode "normal"; }
         bind "d" { HalfPageScrollDown; }
         bind "Super f" { PageScrollDown; }
         bind "h" { PageScrollUp; }
@@ -206,7 +206,6 @@ keybinds clear-defaults=true {
         bind "u" { HalfPageScrollUp; }
     }
     entersearch {
-        bind "Super c" { SwitchToMode "scroll"; }
         bind "esc" { SwitchToMode "scroll"; }
         bind "enter" { SwitchToMode "search"; }
     }
@@ -214,7 +213,6 @@ keybinds clear-defaults=true {
         bind "esc" { UndoRenameTab; SwitchToMode "tab"; }
     }
     shared_among "renametab" "renamepane" {
-        bind "Super c" { SwitchToMode "normal"; }
     }
     renamepane {
         bind "esc" { UndoRenamePane; SwitchToMode "pane"; }
