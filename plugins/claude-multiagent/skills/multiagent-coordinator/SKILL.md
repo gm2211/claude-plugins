@@ -106,7 +106,7 @@ repo/                          # main branch — never developed against directl
 1. **Never develop against `main` directly.** Create a principal worktree for each feature/bug.
 2. **Beads live in the principal worktree.** Run `bd init` in the principal worktree. All tickets for that feature are tracked there.
 3. **Sub-agents spin up further worktrees from the principal worktree** (not from `main`). Use `bd worktree create` from within the principal worktree so beads redirect files resolve correctly.
-4. **Merging flow:** Sub-agent worktree → principal worktree (coordinator merges) → `main` (when feature is complete).
+4. **Merging flow:** Sub-agent worktree → principal worktree (coordinator merges) → PR to `main` (when feature is complete). Never merge to `main` locally — always push the principal branch and create a GitHub PR. This allows multiple coordinators to work on separate features concurrently without stepping on each other.
 
 **Setup for a new feature:**
 
@@ -244,7 +244,7 @@ The monitor serves two functions:
 Merging happens in **two stages:**
 
 1. **Sub-agent worktree → principal worktree:** After a sub-agent completes a ticket, merge its work into the principal feature worktree. Review the diff, sanity check, merge. Handle conflicts yourself unless genuinely ambiguous.
-2. **Principal worktree → main:** When the entire feature is complete (all beads closed, tests passing), merge the principal worktree into `main` and push.
+2. **Principal worktree → `main` via PR:** When the entire feature is complete (all beads closed, tests passing), push the principal branch and create a GitHub PR to `main`. Never merge locally.
 
 ### After merging a sub-agent's work (stage 1):
 
@@ -255,10 +255,18 @@ Merging happens in **two stages:**
 
 ### After completing a feature (stage 2):
 
-1. From the repo root, merge the principal branch into `main`
-2. `bd worktree remove .worktrees/<feature-branch>`
-3. `git branch -d <feature-branch>`
-4. **Changelog entry:** If the merged work is user-visible or notable (new feature, bug fix, breaking change), delegate a changelog update to a sub-agent. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Deprecated, Removed, Fixed, Security) in `CHANGELOG.md` at the repo root. Skip for purely internal refactors or trivial changes.
+1. Push the principal branch and create a GitHub PR to `main`:
+   ```bash
+   git push -u origin <feature-branch>
+   gh pr create --title "..." --body "..."
+   ```
+   **Never merge to `main` locally.** Always go through a PR so multiple coordinators can work on separate features concurrently without conflicts.
+2. Once the PR is merged (by GitHub), clean up:
+   ```bash
+   bd worktree remove .worktrees/<feature-branch>
+   git branch -d <feature-branch>
+   ```
+3. **Changelog entry:** If the merged work is user-visible or notable (new feature, bug fix, breaking change), delegate a changelog update to a sub-agent. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Deprecated, Removed, Fixed, Security) in `CHANGELOG.md` at the repo root. Skip for purely internal refactors or trivial changes.
 
 Do not let worktrees or tickets accumulate.
 
