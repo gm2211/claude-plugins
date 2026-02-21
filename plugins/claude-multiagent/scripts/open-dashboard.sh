@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open Zellij dashboard panes for beads (tickets), agent status, and deploy watch.
+# Open Zellij dashboard panes for beads (tickets) and deploy watch.
 # Called by both the SessionStart hook and the agents-dashboard skill.
 # Fails silently when not running inside Zellij.
 #
@@ -202,12 +202,10 @@ done
 # This catches both new named panes and old unnamed panes from cached
 # plugin versions running watch-*.py from any path.
 has_beads=$(has_dashboard_pane "$focused_tab" "dashboard-beads" "beads_tui" "$PROJECT_DIR")
-has_agents=$(has_dashboard_pane "$focused_tab" "dashboard-agents" "watch-agents.py" "$PROJECT_DIR")
 has_deploys=$(has_dashboard_pane "$focused_tab" "dashboard-deploys" "watch-deploys.py" "$PROJECT_DIR")
 
 all_present=true
 [[ "$has_beads" -eq 0 ]] && all_present=false
-[[ "$has_agents" -eq 0 ]] && all_present=false
 if $deploy_pane_enabled && [[ "$has_deploys" -eq 0 ]]; then
   all_present=false
 fi
@@ -226,9 +224,7 @@ DASH_ID=$(uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]' | head -c 8)
 #
 #   ┌──────────────┬────────────────┐
 #   │              │  watch-beads   │
-#   │              ├────────────────┤
-#   │   Claude     │  watch-agents  │
-#   │              ├────────────────┤
+#   │   Claude     ├────────────────┤
 #   │              │  watch-deploys │
 #   └──────────────┴────────────────┘
 #
@@ -262,8 +258,15 @@ if [[ "$has_beads" -eq 0 ]]; then
 
   if [[ -d "${BEADS_TUI_DIR}/beads_tui" ]]; then
     # Bundled submodule — run as python module with PYTHONPATH
+    # Prefer the venv python (has textual pre-installed) if available
+    _bdt_python="python3"
+    if [[ -n "${BEADS_TUI_VENV:-}" && -x "${BEADS_TUI_VENV}/bin/python3" ]]; then
+      _bdt_python="${BEADS_TUI_VENV}/bin/python3"
+    elif [[ -x "${SCRIPT_DIR}/.beads-tui-venv/bin/python3" ]]; then
+      _bdt_python="${SCRIPT_DIR}/.beads-tui-venv/bin/python3"
+    fi
     zellij action new-pane --name "dashboard-beads-${DASH_ID}" --close-on-exit --direction right \
-      -- env PYTHONPATH="${BEADS_TUI_DIR}" python3 -m beads_tui "${BDT_ARGS[@]}" 2>/dev/null || true
+      -- env PYTHONPATH="${BEADS_TUI_DIR}" "$_bdt_python" -m beads_tui "${BDT_ARGS[@]}" 2>/dev/null || true
   elif command -v bdt &>/dev/null; then
     # System-installed bdt — use full resolved path so Zellij can find it
     BDT_PATH="$(command -v bdt)"
@@ -284,21 +287,6 @@ fi
   # created it in the foreground block above, so a right pane now exists
   # regardless of the original detection value.
   has_right_pane=1
-
-  if [[ "$has_agents" -eq 0 ]]; then
-    if [[ "$has_right_pane" -eq 1 ]]; then
-      # Right column exists — split it downward.
-      zellij action move-focus right 2>/dev/null || true
-      zellij action new-pane --name "dashboard-agents-${DASH_ID}" --close-on-exit --direction down \
-        -- python3 "${SCRIPT_DIR}/watch-agents.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
-    else
-      # No right column yet — create agents to the right of Claude.
-      zellij action new-pane --name "dashboard-agents-${DASH_ID}" --close-on-exit --direction right \
-        -- python3 "${SCRIPT_DIR}/watch-agents.py" "${PROJECT_DIR}" "${DASH_ID}" 2>/dev/null || true
-    fi
-    has_right_pane=1
-    # Focus is now on the agents pane.
-  fi
 
   if $deploy_pane_enabled && [[ "$has_deploys" -eq 0 ]]; then
     if [[ "$has_right_pane" -eq 1 ]]; then

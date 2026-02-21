@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Close Zellij dashboard panes (beads, agents, deploys) by killing the
+# Close Zellij dashboard panes (beads, deploys) by killing the
 # processes that run inside them.  When a process exits, Zellij automatically
 # closes the pane.
 #
@@ -98,7 +98,7 @@ extract_dashboard_id_from_layout() {
   local layout="$1"
   local id=""
   while IFS= read -r line; do
-    if [[ "$line" =~ name=\"dashboard-(beads|agents|deploys)-([a-f0-9]+)\" ]]; then
+    if [[ "$line" =~ name=\"dashboard-(beads|deploys)-([a-f0-9]+)\" ]]; then
       id="${BASH_REMATCH[2]}"
       break
     fi
@@ -114,7 +114,7 @@ DASH_ID=$(extract_dashboard_id_from_layout "$all_layout")
 
 # Strategy 2 (legacy fallback): Scan watch-*.py processes for the DASH_ID arg.
 if [[ -z "$DASH_ID" ]]; then
-  for script in "watch-beads.py" "watch-agents.py" "watch-deploys.py"; do
+  for script in "watch-beads.py" "watch-deploys.py"; do
     pids=$(pgrep -f "$script" 2>/dev/null || true)
     for pid in $pids; do
       cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
@@ -182,7 +182,7 @@ kill_tree() {
 # child processes (e.g. fswatch spawned by watch-deploys.py).
 # ---------------------------------------------------------------------------
 
-WATCH_SCRIPTS=("bdt" "beads_tui" "watch-beads.py" "watch-agents.py" "watch-deploys.py")
+WATCH_SCRIPTS=("bdt" "beads_tui" "watch-beads.py" "watch-deploys.py")
 
 killed=0
 for script in "${WATCH_SCRIPTS[@]}"; do
