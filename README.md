@@ -41,27 +41,33 @@ A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin that turn
 
 ## Required Permissions
 
-Add to `~/.claude/settings.json`:
+On first use in a repo, the plugin detects missing permissions and offers to configure `.claude/settings.local.json` automatically. Just approve the prompt and restart the session.
+
+<details>
+<summary>Manual setup (or reference)</summary>
+
+Add to your repo's `.claude/settings.local.json`:
 
 ```json
 {
+  "permissions": {
+    "allow": ["Read", "Edit", "Write", "Bash(bd:*)", "Bash(git:*)"]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
-  "permissions": {
-    "allow": [
-      "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)",
-      "Bash(git pull:*)", "Bash(git merge:*)", "Bash(git branch:*)",
-      "Bash(git diff:*)", "Bash(git log:*)", "Bash(git status:*)",
-      "Bash(git worktree:*)",
-      "Bash(bd:*)", "Bash(zellij:*)",
-      "Bash(printf:*)", "Bash(mkdir:*)", "Bash(sleep:*)"
-    ]
   }
 }
 ```
 
-Then add your own project-specific permissions (build tools, test runners, etc.).
+**Why this works:** `autoAllowBashIfSandboxed` auto-allows all bash commands within Claude's sandbox (filesystem restricted to repo dir, network restricted). `Read`/`Edit`/`Write` are explicitly allowed since they're not bash commands. `bd` and `git` are explicitly allowed for clarity.
+
+Add your own project-specific permissions (build tools, test runners, etc.) to the `allow` array.
+
+</details>
 
 ## License
 
