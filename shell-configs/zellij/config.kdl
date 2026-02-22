@@ -1,6 +1,6 @@
 keybinds clear-defaults=true {
     locked {
-        bind "Super g" { SwitchToMode "normal"; }
+        // Lock mode disabled — Super g repurposed for Move mode
     }
     pane {
         bind "left" { MoveFocus "left"; }
@@ -76,7 +76,7 @@ keybinds clear-defaults=true {
         bind "up" { MovePane "up"; }
         bind "right" { MovePane "right"; }
         bind "h" { MovePane "left"; }
-        bind "Super h" { SwitchToMode "normal"; }
+        bind "Super g" { SwitchToMode "normal"; }
         bind "j" { MovePane "down"; }
         bind "k" { MovePane "up"; }
         bind "l" { MovePane "right"; }
@@ -146,7 +146,10 @@ keybinds clear-defaults=true {
         bind "Alt [" { PreviousSwapLayout; }
         bind "Alt ]" { NextSwapLayout; }
         bind "Alt f" { ToggleFloatingPanes; }
-        bind "Super g" { SwitchToMode "locked"; }
+        bind "Super h" { MoveFocus "left"; }
+        bind "Super j" { MoveFocus "down"; }
+        bind "Super k" { MoveFocus "up"; }
+        bind "Super l" { MoveFocus "right"; }
         bind "Alt h" { MoveFocusOrTab "left"; }
         bind "Alt i" { MoveTab "left"; }
         bind "Alt j" { MoveFocus "down"; }
@@ -159,7 +162,7 @@ keybinds clear-defaults=true {
         bind "Super q" { Quit; }
     }
     shared_except "locked" "move" {
-        bind "Super h" { SwitchToMode "move"; }
+        bind "Super g" { SwitchToMode "move"; }
     }
     shared_except "locked" "session" {
         bind "Super y" { SwitchToMode "session"; }
@@ -243,8 +246,6 @@ keybinds clear-defaults=true {
     }
 }
 
-// Plugin aliases - can be used to change the implementation of Zellij
-// changing these requires a restart to take effect
 plugins {
     about location="zellij:about"
     compact-bar location="zellij:compact-bar"
@@ -262,7 +263,6 @@ plugins {
     }
 }
 
-// Plugins to load in the background when a new session starts
 load_plugins {
 }
 web_client {
