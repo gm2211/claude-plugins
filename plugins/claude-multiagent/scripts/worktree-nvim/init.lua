@@ -106,14 +106,21 @@ vim.keymap.set("n", "q", function()
   end
 end, { desc = "Quit / close diffview" })
 
--- Auto-open DiffviewOpen on startup
+-- Auto-open DiffviewOpen on startup (with retry for slow plugin loads)
 vim.api.nvim_create_autocmd("VimEnter", {
   callback = function()
-    vim.defer_fn(function()
-      local ok, _ = pcall(vim.cmd, "DiffviewOpen")
-      if not ok then
-        vim.notify("Diffview not ready yet — press <Space>d to open manually", vim.log.levels.INFO)
+    local attempts = 0
+    local max_attempts = 3
+    local function try_open()
+      attempts = attempts + 1
+      if vim.fn.exists(":DiffviewOpen") == 2 then
+        pcall(vim.cmd, "DiffviewOpen")
+      elseif attempts < max_attempts then
+        vim.defer_fn(try_open, 1000)
+      else
+        vim.notify("Diffview not ready — press <Space>d to open manually", vim.log.levels.INFO)
       end
-    end, 500)
+    end
+    vim.defer_fn(try_open, 1000)
   end,
 })

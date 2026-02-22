@@ -296,6 +296,20 @@ if [[ "$has_beads" -eq 0 ]]; then
   fi
 fi
 
+# Pre-bootstrap lazy.nvim plugins for the worktree-nvim pane.
+# On first run, lazy.nvim clones itself but the actual plugins (diffview.nvim,
+# plenary.nvim, nvim-web-devicons) require a network fetch that fails inside
+# Zellij panes. Run a headless nvim to install them before opening the pane.
+if $worktree_pane_enabled && [[ "$has_worktree_nvim" -eq 0 ]]; then
+  NVIM_INIT="${SCRIPT_DIR}/worktree-nvim/init.lua"
+  if command -v nvim &>/dev/null && [[ -f "$NVIM_INIT" ]]; then
+    _diffview_dir="${HOME}/.local/share/claude-worktree-nvim/lazy/diffview.nvim"
+    if [[ ! -d "$_diffview_dir" ]]; then
+      timeout 30 nvim --headless -u "${NVIM_INIT}" --clean -c "Lazy! sync" -c "qa!" 2>/dev/null || true
+    fi
+  fi
+fi
+
 # The remaining panes split the right column downward; launch them in parallel.
 # If beads already occupies the right column, agents/deploys split it downward.
 # If beads is absent, the FIRST new pane must create the right column itself.
