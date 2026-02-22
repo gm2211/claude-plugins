@@ -26,17 +26,16 @@ TIME=$(date '+%H:%M')
 # Git info (run from the workspace dir)
 GIT_INFO=""
 if [ -n "$DIR" ] && cd "$DIR" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1; then
+    REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)
     BRANCH=$(git branch --show-current 2>/dev/null)
-    # Detect worktree and get repo name
+    # Detect worktree
     WT=""
-    GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
-    COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
-    if [ -n "$COMMON_DIR" ] && [ "$GIT_DIR" != "$COMMON_DIR" ]; then
-        WT=" wt"
-        # In a worktree, derive repo name from the main repo's .git dir
-        REPO=$(basename "$(dirname "$(cd "$DIR" && cd "$COMMON_DIR" && pwd)")" 2>/dev/null)
-    else
-        REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)
+    if git rev-parse --git-common-dir >/dev/null 2>&1; then
+        GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
+        COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
+        if [ "$GIT_DIR" != "$COMMON_DIR" ]; then
+            WT=" wt"
+        fi
     fi
     # Files changed (staged + unstaged)
     CHANGED=$(git diff --numstat HEAD 2>/dev/null | wc -l | tr -d ' ')
@@ -45,7 +44,7 @@ if [ -n "$DIR" ] && cd "$DIR" 2>/dev/null && git rev-parse --git-dir >/dev/null 
     # Git additions/deletions from diff
     GIT_ADDS=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$1} END {print s+0}')
     GIT_DELS=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$2} END {print s+0}')
-    GIT_INFO=" \033[90m|\033[0m \033[90m${DIR}\033[0m \033[36m${REPO}\033[0m:\033[33m${BRANCH}${WT}\033[0m \033[90m${TOTAL_CHANGED}f\033[0m \033[32m+${GIT_ADDS}\033[0m \033[31m-${GIT_DELS}\033[0m"
+    GIT_INFO=" \033[90m|\033[0m \033[36m${REPO}\033[0m:\033[33m${BRANCH}${WT}\033[0m \033[90m${TOTAL_CHANGED}f\033[0m \033[32m+${GIT_ADDS}\033[0m \033[31m-${GIT_DELS}\033[0m"
 fi
 
 # Context bar — thin 20-char bar
@@ -85,5 +84,12 @@ elif [ "$SANDBOX_ENABLED" = "false" ]; then
     SANDBOX_STR=" \033[90m|\033[0m \033[90msandbox:off\033[0m"
 fi
 
+# Current working directory (full path, with ~ for home directory)
+DIR_DISPLAY=""
+if [ -n "$DIR" ]; then
+    DIR_SHORT=$(echo "$DIR" | sed "s|^$HOME|~|")
+    DIR_DISPLAY=" \033[90m|\033[0m \033[34m${DIR_SHORT}\033[0m"
+fi
+
 # Output single line
-echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR} \033[90m|\033[0m ${BAR} ${PCT}%${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
+echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR}${DIR_DISPLAY} \033[90m|\033[0m ${BAR} ${PCT}%${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
