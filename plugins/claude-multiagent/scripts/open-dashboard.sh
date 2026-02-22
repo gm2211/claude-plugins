@@ -342,12 +342,27 @@ fi
 # On first run, lazy.nvim clones itself but the actual plugins (diffview.nvim,
 # plenary.nvim, nvim-web-devicons) require a network fetch that fails inside
 # Zellij panes. Run a headless nvim to install them before opening the pane.
+#
+# Previous approach used:
+#   nvim --headless -u "$NVIM_INIT" --clean -c "Lazy! sync" -c "qa!"
+# This failed silently because:
+#   1. Lazy! sync dispatches async git clones; "qa!" fires before they finish
+#   2. stderr was suppressed, hiding the actual errors
+# Fix: use a Lua callback via LazySync autocmd to quit only after sync completes,
+# and drop --clean since -u already provides config isolation while --clean can
+# interfere with runtimepath setup that lazy.nvim needs.
 if $worktree_pane_enabled && [[ "$has_worktree_nvim" -eq 0 ]]; then
   NVIM_INIT="${SCRIPT_DIR}/worktree-nvim/init.lua"
   if command -v nvim &>/dev/null && [[ -f "$NVIM_INIT" ]]; then
     _diffview_dir="${HOME}/.local/share/claude-worktree-nvim/lazy/diffview.nvim"
     if [[ ! -d "$_diffview_dir" ]]; then
-      timeout 30 nvim --headless -u "${NVIM_INIT}" --clean -c "Lazy! sync" -c "qa!" 2>/dev/null || true
+      # Use lua to register a callback that quits after Lazy finishes syncing.
+      # The LazySync event fires when all plugin operations complete.
+      # Fallback: a vim.defer_fn timer ensures we quit even if the event never fires.
+      timeout 60 nvim --headless -u "${NVIM_INIT}" \
+        -c "lua vim.api.nvim_create_autocmd('User', { pattern = 'LazySync', once = true, callback = function() vim.defer_fn(function() vim.cmd('qa!') end, 500) end })" \
+        -c "lua vim.defer_fn(function() vim.cmd('qa!') end, 55000)" \
+        -c "Lazy! sync" 2>/dev/null || true
     fi
   fi
 fi

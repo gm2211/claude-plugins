@@ -18,6 +18,43 @@ if command -v bd >/dev/null 2>&1; then
     fi
 fi
 
+# --- Submodule dirty-check ---
+#
+# Warn (non-blocking) if any plugin submodules have a checked-out commit that
+# differs from the committed pointer.  This catches the common mistake of
+# updating a submodule locally (e.g. `cd sub && git pull`) without staging the
+# new pointer in the parent repo via `git add <submodule>`.
+#
+# `git submodule status` prefixes:
+#   +  = checked-out commit differs from index (dirty pointer)
+#   -  = submodule not initialised
+#   U  = merge conflict
+# We only flag "+" for submodules under plugins/.
+
+DIRTY_SUBS=""
+if git submodule status -- plugins/ 2>/dev/null | grep -q '^\+'; then
+    DIRTY_SUBS=$(git submodule status -- plugins/ 2>/dev/null | grep '^\+' | while read -r line; do
+        sub_path=$(echo "$line" | awk '{print $2}')
+        sub_commit=$(echo "$line" | sed 's/^+//' | awk '{print $1}')
+        printf "      %s (checked out: %.8s)\n" "$sub_path" "$sub_commit"
+    done)
+fi
+
+if [ -n "$DIRTY_SUBS" ]; then
+    echo "" >&2
+    echo "=== Push rejected: dirty submodule pointers ===" >&2
+    echo "  The following plugin submodules have been modified locally" >&2
+    echo "  but the new pointer has NOT been committed:" >&2
+    echo "" >&2
+    printf "%s\n" "$DIRTY_SUBS" >&2
+    echo "" >&2
+    echo "  Fix: git add <submodule-path> && git commit --amend" >&2
+    echo "  Or ignore if this is intentional." >&2
+    echo "" >&2
+    # Hard-block: reject the push so users don't ship stale submodule content.
+    exit 1
+fi
+
 # --- Version-bump check ---
 #
 # Git pre-push hook receives lines on stdin:
