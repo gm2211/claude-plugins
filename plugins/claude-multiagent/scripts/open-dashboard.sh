@@ -382,7 +382,7 @@ fi
       zellij action move-focus right 2>/dev/null || true
       zellij action move-focus down 2>/dev/null || true
       zellij action new-pane --name "dashboard-worktree-nvim-${DASH_ID}" --close-on-exit --direction down \
-        -- nvim -u "${NVIM_INIT}" --clean \
+        -- nvim -u "${NVIM_INIT}" \
            -c "cd ${PROJECT_DIR}" 2>/dev/null || true
     else
       # Placeholder with install instructions
