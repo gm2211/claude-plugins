@@ -37,10 +37,8 @@ if [ -n "$DIR" ] && cd "$DIR" 2>/dev/null && git rev-parse --git-dir >/dev/null 
             WT=" wt"
         fi
     fi
-    # Files changed (staged + unstaged)
-    CHANGED=$(git diff --numstat HEAD 2>/dev/null | wc -l | tr -d ' ')
-    STAGED=$(git diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
-    TOTAL_CHANGED=$((CHANGED + STAGED))
+    # Files changed (unique count from porcelain status)
+    TOTAL_CHANGED=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
     # Git additions/deletions from diff
     GIT_ADDS=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$1} END {print s+0}')
     GIT_DELS=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$2} END {print s+0}')
