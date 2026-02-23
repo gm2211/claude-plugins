@@ -333,11 +333,13 @@ class DeployWatchApp:
         self.is_fetching = False
         self.fetch_error = ""
         self.fswatch = FsWatcher()
+        self.selected_row = 0
 
         # Setup curses
         curses.curs_set(0)  # Hide cursor
         curses.use_default_colors()
         curses.halfdelay(20)  # 2 second timeout for getch (20 tenths)
+        self.stdscr.keypad(True)  # Enable arrow/special key sequences
 
         # Initialize color pairs
         if curses.has_colors():
@@ -386,6 +388,9 @@ class DeployWatchApp:
             else:
                 # Success (possibly empty) — update cached data
                 self.cached_records = records
+            # Clamp selected_row to valid range
+            max_sel = max(0, len(self.cached_records) - 1)
+            self.selected_row = min(self.selected_row, max_sel)
             self.last_fetch_time = int(time.time())
             _log.debug("do_refresh: got %s records", len(records) if records is not None else "None")
         except Exception as e:
@@ -444,6 +449,15 @@ class DeployWatchApp:
         if self.fetch_error and not self.is_fetching:
             attr = curses.color_pair(3)  # red
         self.safe_addstr(footer_row, 0, footer, attr)
+
+        # Show selected row's URL on the second-to-last line if available
+        if self.cached_records and not self.show_help and not self.show_provider_menu and not self.show_provider_manage:
+            url_row = max_y - 2
+            if 0 <= self.selected_row < len(self.cached_records):
+                url = self.cached_records[self.selected_row].get("service_url", "")
+                if url:
+                    url_text = f"Selected: {url}"
+                    self.safe_addstr(url_row, 0, url_text[:max_x], curses.color_pair(4) | curses.A_DIM)
 
     def render_unconfigured(self, row):
         """Render the 'not configured' screen. Returns next row."""
@@ -566,11 +580,13 @@ class DeployWatchApp:
         row += 1
 
         # Draw data rows
-        for tr in table_rows:
+        for row_idx, tr in enumerate(table_rows):
             if row >= max_y - 2:
                 break
+            is_selected = (row_idx == self.selected_row)
+            row_base_attr = curses.A_REVERSE if is_selected else 0
             x = 0
-            self.safe_addstr(row, x, "|")
+            self.safe_addstr(row, x, "|", row_base_attr)
             x += 1
             for i, cell in enumerate(tr):
                 w = widths[i]
@@ -591,20 +607,20 @@ class DeployWatchApp:
                     status_text = self.status_display(cell)
                     if len(status_text) > max_content:
                         status_text = status_text[:max_content]
-                    attr = self.status_color(cell)
-                    self.safe_addstr(row, x, " ")
+                    attr = self.status_color(cell) | row_base_attr
+                    self.safe_addstr(row, x, " ", row_base_attr)
                     self.safe_addstr(row, x + 1, status_text, attr)
                     pad = w - 1 - len(status_text)
                     if pad > 0:
-                        self.safe_addstr(row, x + 1 + len(status_text), " " * pad)
+                        self.safe_addstr(row, x + 1 + len(status_text), " " * pad, row_base_attr)
                 else:
-                    self.safe_addstr(row, x, " " + display)
+                    self.safe_addstr(row, x, " " + display, row_base_attr)
                     pad = w - 1 - len(display)
                     if pad > 0:
-                        self.safe_addstr(row, x + 1 + len(display), " " * pad)
+                        self.safe_addstr(row, x + 1 + len(display), " " * pad, row_base_attr)
 
                 x += w
-                self.safe_addstr(row, x, "|")
+                self.safe_addstr(row, x, "|", row_base_attr)
                 x += 1
             row += 1
 
@@ -624,15 +640,19 @@ class DeployWatchApp:
         self.safe_addstr(row, 2, "Keyboard Shortcuts", curses.A_BOLD)
         row += 2
         shortcuts = [
+            ("Up / k", "Move selection up"),
+            ("Down / j", "Move selection down"),
+            ("Enter", "Open selected deploy URL in browser"),
             ("p", "Select/configure deployment provider"),
             ("r", "Force refresh deploy data"),
             ("d", "Disable deploy pane for this project"),
             ("q", "Quit"),
             ("?", "Toggle this help"),
         ]
+        key_col_width = max(len(k) for k, _ in shortcuts) + 2
         for key, desc in shortcuts:
             self.safe_addstr(row, 2, key, curses.A_BOLD)
-            self.safe_addstr(row, 4, f"  {desc}")
+            self.safe_addstr(row, 2 + key_col_width, desc)
             row += 1
         row += 1
         self.safe_addstr(row, 2, "Press any key to dismiss.")
@@ -833,9 +853,41 @@ class DeployWatchApp:
 
     # --- Input handling ---
 
+    def _open_url(self, url):
+        """Open a URL in the default browser. Non-blocking."""
+        if not url:
+            return
+        import platform
+        if platform.system() == "Darwin":
+            opener = "open"
+        else:
+            opener = "xdg-open"
+        if shutil.which(opener):
+            try:
+                subprocess.Popen([opener, url],
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
+
     def handle_input(self, key):
         """Handle a keypress. Returns False to quit, True to continue."""
         if key == -1:
+            return True
+
+        # Handle special keys before chr() conversion
+        if key == curses.KEY_UP:
+            if self.cached_records:
+                self.selected_row = max(0, self.selected_row - 1)
+            return True
+        if key == curses.KEY_DOWN:
+            if self.cached_records:
+                self.selected_row = min(len(self.cached_records) - 1, self.selected_row + 1)
+            return True
+        if key in (10, curses.KEY_ENTER):
+            if self.cached_records and 0 <= self.selected_row < len(self.cached_records):
+                url = self.cached_records[self.selected_row].get("service_url", "")
+                self._open_url(url)
             return True
 
         ch = None
@@ -892,6 +944,12 @@ class DeployWatchApp:
             self.do_refresh()
         elif ch in ("d", "D"):
             self.disable_deploy_pane()
+        elif ch == "k":
+            if self.cached_records:
+                self.selected_row = max(0, self.selected_row - 1)
+        elif ch == "j":
+            if self.cached_records:
+                self.selected_row = min(len(self.cached_records) - 1, self.selected_row + 1)
 
         return True
 
