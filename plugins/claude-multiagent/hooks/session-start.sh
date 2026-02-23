@@ -53,6 +53,21 @@ fi
 # Export for open-dashboard.sh to use
 export BEADS_TUI_VENV
 
+# --- Cache staleness detection (plugin developers only) ---
+CACHE_STALE_WARNING=""
+if [[ -d "${PWD}/plugins/claude-multiagent" ]]; then
+  _source_sha="$(git -C "$PWD" rev-parse HEAD 2>/dev/null || true)"
+  _installed_json="${HOME}/.claude/plugins/installed_plugins.json"
+  _cached_sha=""
+  if [[ -n "$_source_sha" && -f "$_installed_json" ]] && command -v jq &>/dev/null; then
+    _cached_sha=$(jq -r '."claude-multiagent@gm2211-plugins"[0].gitCommitSha // empty' "$_installed_json" 2>/dev/null || true)
+  fi
+  if [[ -n "$_source_sha" && -n "$_cached_sha" && "$_source_sha" != "$_cached_sha" ]]; then
+    _cached_version=$(jq -r '."claude-multiagent@gm2211-plugins"[0].version // "unknown"' "$_installed_json" 2>/dev/null || true)
+    CACHE_STALE_WARNING="⚠️ PLUGIN CACHE IS STALE — source HEAD (${_source_sha:0:8}) ≠ cached version $_cached_version (${_cached_sha:0:8}). Dashboard scripts and hooks may be outdated. To refresh: rm -rf ~/.claude/plugins/cache/gm2211-plugins/claude-multiagent/ && restart Claude Code session."
+  fi
+fi
+
 # Escape string for JSON embedding.
 # Uses jq when available; falls back to pure-bash substitution.
 if command -v jq &>/dev/null; then
@@ -181,12 +196,18 @@ if [[ -n "$dashboard_output" ]]; then
 fi
 dashboard_note_escaped=$(escape_for_json "$dashboard_note")
 
+# Prepend cache staleness warning if detected
+CACHE_STALE_ESCAPED=""
+if [[ -n "$CACHE_STALE_WARNING" ]]; then
+  CACHE_STALE_ESCAPED="$(escape_for_json "$CACHE_STALE_WARNING")\n\n"
+fi
+
 # Output context injection as JSON
 cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "${PERMISSIONS_BOOTSTRAP}${WORKTREE_CONTEXT_ESCAPED}<EXTREMELY_IMPORTANT>\nYou are a COORDINATOR (claude-multiagent plugin). FORBIDDEN from editing files, writing code, running builds/tests/linters. Only git merges allowed. No exceptions. Dispatch sub-agents for all work. If task feels small, ask user via AskUserQuestion before doing it yourself.\n\nThe following is your complete behavioral specification. Every rule is mandatory.\n\n${coordinator_escaped}\n\n${dashboard_note_escaped}\n\nAcknowledge coordinator mode in your first response.\n</EXTREMELY_IMPORTANT>"
+    "additionalContext": "${CACHE_STALE_ESCAPED}${PERMISSIONS_BOOTSTRAP}${WORKTREE_CONTEXT_ESCAPED}<EXTREMELY_IMPORTANT>\nYou are a COORDINATOR (claude-multiagent plugin). FORBIDDEN from editing files, writing code, running builds/tests/linters. Only git merges allowed. No exceptions. Dispatch sub-agents for all work. If task feels small, ask user via AskUserQuestion before doing it yourself.\n\nThe following is your complete behavioral specification. Every rule is mandatory.\n\n${coordinator_escaped}\n\n${dashboard_note_escaped}\n\nAcknowledge coordinator mode in your first response.\n</EXTREMELY_IMPORTANT>"
   }
 }
 EOF
