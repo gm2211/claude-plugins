@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# GitHub Actions workflow provider for deploy-watch.
+# Responds to: name, config, list
+#
+# Environment variables (set by watch-deploys.py via DEPLOY_WATCH_* prefix):
+#   DEPLOY_WATCH_REPO  — GitHub repo slug, e.g. "owner/repo"
+#                        If not set, auto-detected from the git remote.
+
+set -euo pipefail
+
+CMD="${1:-}"
+
+# Detect the GitHub repo slug from the current git remote (origin).
+# Returns "owner/repo" or empty string on failure.
+detect_repo() {
+    local remote_url
+    remote_url=$(git remote get-url origin 2>/dev/null) || return 1
+
+    # Strip .git suffix and extract owner/repo
+    # Handles:
+    #   https://github.com/owner/repo.git
+    #   https://github.com/owner/repo
+    #   git@github.com:owner/repo.git
+    #   git@github.com:owner/repo
+    local slug
+    slug=$(echo "$remote_url" \
+        | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' \
+        | sed -E 's|\.git$||')
+
+    # Verify it looks like owner/repo
+    if [[ "$slug" =~ ^[^/]+/[^/]+$ ]]; then
+        echo "$slug"
+    fi
+}
+
+cmd_name() {
+    echo "GitHub Actions"
+}
+
+cmd_config() {
+    local default_repo
+    default_repo=$(detect_repo 2>/dev/null) || default_repo=""
+
+    # Emit JSON config. If we detected a repo, provide it as the default so the
+    # user can just press Enter during interactive setup.
+    if [[ -n "$default_repo" ]]; then
+        jq -n --arg repo "$default_repo" '{
+            fields: [{
+                key: "repo",
+                label: "GitHub repo (owner/name)",
+                required: false,
+                default: $repo
+            }]
+        }'
+    else
+        echo '{
+  "fields": [
+    {
+      "key": "repo",
+      "label": "GitHub repo (owner/name)",
+      "required": true
+    }
+  ]
+}'
+    fi
+}
+
+cmd_list() {
+    local repo="${DEPLOY_WATCH_REPO:-}"
+
+    # Fall back to auto-detection if not configured
+    if [[ -z "$repo" ]]; then
+        repo=$(detect_repo 2>/dev/null) || repo=""
+    fi
+
+    if [[ -z "$repo" ]]; then
+        echo "Error: could not determine GitHub repo. Set DEPLOY_WATCH_REPO or run from inside a GitHub-hosted git repo." >&2
+        exit 1
+    fi
+
+    # Fetch recent workflow runs as JSON
+    local raw
+    if ! raw=$(gh run list \
+        --repo "$repo" \
+        --limit 5 \
+        --json "headSha,workflowName,headBranch,status,conclusion,createdAt,updatedAt,url" \
+        2>/dev/null); then
+        echo "Error: gh run list failed for repo '$repo'" >&2
+        exit 1
+    fi
+
+    # Parse each run with jq and emit JSONL
+    echo "$raw" | jq -c '.[] | {
+        commit: (.headSha[:7]),
+        message: (.workflowName + " [" + .headBranch + "]"),
+        author: "",
+        build_status: (
+            if .status == "completed" then
+                if .conclusion == "success" then "success"
+                elif .conclusion == "failure" then "failed"
+                elif .conclusion == "cancelled" then "cancelled"
+                elif .conclusion == "skipped" then "cancelled"
+                else (.conclusion // "failed")
+                end
+            elif .status == "in_progress" then "building"
+            elif .status == "queued" then "pending"
+            elif .status == "waiting" then "pending"
+            else "pending"
+            end
+        ),
+        deploy_status: (
+            if .status == "completed" then
+                if .conclusion == "success" then "live"
+                elif .conclusion == "failure" then "failed"
+                elif .conclusion == "cancelled" then "cancelled"
+                elif .conclusion == "skipped" then "cancelled"
+                else (.conclusion // "failed")
+                end
+            elif .status == "in_progress" then "deploying"
+            elif .status == "queued" then "pending"
+            elif .status == "waiting" then "pending"
+            else "pending"
+            end
+        ),
+        build_started: (
+            .createdAt |
+            if (. != null and . != "") then
+                (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
+            else ""
+            end
+        ),
+        deploy_finished: (
+            if .status == "completed" then
+                (.updatedAt |
+                 if (. != null and . != "") then
+                     (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
+                 else ""
+                 end)
+            else ""
+            end
+        ),
+        service_url: .url
+    }'
+}
+
+case "$CMD" in
+    name)   cmd_name ;;
+    config) cmd_config ;;
+    list)   cmd_list ;;
+    *)
+        echo "Usage: github-actions <name|config|list>" >&2
+        exit 1
+        ;;
+esac
