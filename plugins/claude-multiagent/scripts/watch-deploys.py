@@ -190,7 +190,7 @@ def fetch_deploys():
             _log.debug("fetch_deploys: stderr: %s", result.stderr.strip())
         if result.returncode != 0:
             _log.warning("fetch_deploys: provider exited %d", result.returncode)
-            return []
+            return None
         records = []
         for line in result.stdout.strip().split("\n"):
             line = line.strip()
@@ -205,10 +205,10 @@ def fetch_deploys():
         return records
     except subprocess.TimeoutExpired:
         _log.error("fetch_deploys: provider timed out after 30s")
-        return []
+        return None
     except FileNotFoundError:
         _log.error("fetch_deploys: provider script not found: %s", script)
-        return []
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -380,10 +380,14 @@ class DeployWatchApp:
         self.fetch_error = ""
         try:
             records = fetch_deploys()
-            if records:
+            if records is None:
+                # Provider failure — keep cached data, show error indicator
+                self.fetch_error = "Provider error"
+            else:
+                # Success (possibly empty) — update cached data
                 self.cached_records = records
             self.last_fetch_time = int(time.time())
-            _log.debug("do_refresh: got %d records", len(records))
+            _log.debug("do_refresh: got %s records", len(records) if records is not None else "None")
         except Exception as e:
             self.fetch_error = str(e)
             _log.error("do_refresh: exception: %s", e)
@@ -430,11 +434,16 @@ class DeployWatchApp:
         ts = time.strftime("%H:%M:%S")
         if self.is_fetching:
             status = f"Fetching {self.spinner()}  |  "
+        elif self.fetch_error:
+            status = f"Error: {self.fetch_error}  |  "
         else:
             status = f"Updated {ts}  |  "
 
         footer = f"{status}[p]rovider  [r]efresh  [d]isable  [?]help  [q]uit"
-        self.safe_addstr(footer_row, 0, footer, curses.A_DIM)
+        attr = curses.A_DIM
+        if self.fetch_error and not self.is_fetching:
+            attr = curses.color_pair(3)  # red
+        self.safe_addstr(footer_row, 0, footer, attr)
 
     def render_unconfigured(self, row):
         """Render the 'not configured' screen. Returns next row."""
