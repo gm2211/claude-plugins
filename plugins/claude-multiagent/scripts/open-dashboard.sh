@@ -7,7 +7,9 @@
 # - Detects existing dashboard panes and only creates missing ones
 # - Detects multiple Claude sessions in the same tab and warns instead of
 #   opening duplicate panes
-# - Skips deploy pane if disabled in plugin config
+# - Skips beads and/or dashboard panes if disabled in plugin config
+#   (set beads_pane: disabled or dashboard_pane: disabled in
+#    .claude/claude-multiagent.local.md)
 # - Uses a lock to prevent concurrent runs from creating duplicate panes
 
 set -euo pipefail
@@ -228,16 +230,37 @@ if [[ "$claude_count" -gt 1 ]]; then
   exit 0
 fi
 
-# --- Check if deploy pane is disabled ---
-deploy_pane_enabled=true
+# --- Check which panes are disabled ---
+# Supported keys in .claude/claude-multiagent.local.md:
+#   beads_pane: disabled      — disable the beads (ticket tracker) pane
+#   dashboard_pane: disabled  — disable the watch-dashboard (deploys + actions) pane
+#   deploy_pane: disabled     — legacy alias for dashboard_pane
+beads_pane_enabled=true
+dashboard_pane_enabled=true
 for config_path in \
   "${PROJECT_DIR}/.claude/claude-multiagent.local.md" \
   "${HOME}/.claude/claude-multiagent.local.md"; do
-  if [[ -f "$config_path" ]] && grep -q 'deploy_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
-    deploy_pane_enabled=false
-    break
+  if [[ -f "$config_path" ]]; then
+    if grep -q 'beads_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+      beads_pane_enabled=false
+    fi
+    if grep -q 'dashboard_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+      dashboard_pane_enabled=false
+    fi
+    # Legacy: deploy_pane also disables the unified dashboard
+    if grep -q 'deploy_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+      dashboard_pane_enabled=false
+    fi
   fi
 done
+
+# Log disabled panes so users can see why panes are missing
+if ! $beads_pane_enabled; then
+  echo "Beads pane disabled. Edit .claude/claude-multiagent.local.md to re-enable."
+fi
+if ! $dashboard_pane_enabled; then
+  echo "Dashboard pane disabled. Edit .claude/claude-multiagent.local.md to re-enable."
+fi
 
 # --- Detect existing dashboard panes ---
 # Uses pane name= attribute, command=, and args for robust detection.
@@ -254,8 +277,10 @@ if [[ "$has_deploys" -eq 1 ]] || [[ "$has_ghactions" -eq 1 ]]; then
 fi
 
 all_present=true
-[[ "$has_beads" -eq 0 ]] && all_present=false
-if $deploy_pane_enabled && [[ "$has_dashboard" -eq 0 ]]; then
+if $beads_pane_enabled && [[ "$has_beads" -eq 0 ]]; then
+  all_present=false
+fi
+if $dashboard_pane_enabled && [[ "$has_dashboard" -eq 0 ]]; then
   all_present=false
 fi
 
@@ -279,7 +304,7 @@ DASH_ID=$(uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]' | head -c 8)
 # new-pane moves focus to the newly created pane, so we track where
 # focus ends up after each step.
 
-if [[ "$has_beads" -eq 0 ]]; then
+if $beads_pane_enabled && [[ "$has_beads" -eq 0 ]]; then
   # Create beads pane to the right of Claude. Focus moves to beads.
   BEADS_TUI_DIR="${SCRIPT_DIR}/beads-tui"
   _bd_path="$(command -v bd 2>/dev/null || true)"
@@ -325,7 +350,7 @@ fi
 # If beads already occupies the right column, the dashboard splits downward.
 # If beads is absent, the dashboard creates the right column itself.
 {
-  if $deploy_pane_enabled && [[ "$has_dashboard" -eq 0 ]]; then
+  if $dashboard_pane_enabled && [[ "$has_dashboard" -eq 0 ]]; then
     # Resolve watch-dashboard directory (same fallback logic as beads-tui)
     WATCH_DASH_DIR="${SCRIPT_DIR}/watch-dashboard"
     if [[ ! -d "${WATCH_DASH_DIR}/watch_dashboard" ]]; then

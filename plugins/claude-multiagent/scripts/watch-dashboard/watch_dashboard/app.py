@@ -104,7 +104,7 @@ class WatchDashboardApp(App):
     def action_disable_deploy(self) -> None:
         active = self._get_active_tab_id()
         if active == "deploys-pane":
-            self.query_one(DeploysTab).disable_deploy_pane()
+            self.query_one(DeploysTab).disable_dashboard_pane()
 
     def action_cursor_down(self) -> None:
         active = self._get_active_tab_id()

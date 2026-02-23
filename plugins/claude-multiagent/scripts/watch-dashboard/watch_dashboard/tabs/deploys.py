@@ -232,8 +232,8 @@ class DeploysTab(Vertical):
 
         self.app.push_screen(ProviderManageModal(name), callback=_on_manage)
 
-    def disable_deploy_pane(self) -> None:
-        """Disable the deploy pane for this project and exit."""
+    def disable_dashboard_pane(self) -> None:
+        """Disable the dashboard pane for this project and exit."""
         config_path = os.path.join(
             self._project_dir, ".claude", "claude-multiagent.local.md"
         )
@@ -246,11 +246,11 @@ class DeploysTab(Vertical):
         except FileNotFoundError:
             pass
 
-        if "deploy_pane: disabled" not in existing:
+        if "dashboard_pane: disabled" not in existing:
             with open(config_path, "a") as f:
                 if existing and not existing.endswith("\n"):
                     f.write("\n")
-                f.write("deploy_pane: disabled\n")
+                f.write("dashboard_pane: disabled\n")
 
-        self.app.notify("Deploy pane disabled for this project.")
+        self.app.notify("Dashboard pane disabled. Edit .claude/claude-multiagent.local.md to re-enable.")
         self.app.set_timer(2.0, self.app.exit)

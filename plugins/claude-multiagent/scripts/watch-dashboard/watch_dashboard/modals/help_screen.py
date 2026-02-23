@@ -24,7 +24,7 @@ HELP_TEXT = """\
 
 [bold underline]Deploys Tab[/bold underline]
   [bold]p[/bold]                Configure / change deploy provider
-  [bold]d[/bold]                Disable deploy pane for this project
+  [bold]d[/bold]                Disable dashboard pane for this project
 
 [dim]Auto-refreshes every 30 seconds.[/dim]
 [dim]Press Escape to close.[/dim]"""
