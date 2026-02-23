@@ -87,7 +87,7 @@ When `<WORKTREE_SETUP>` tag is present (you're on the default branch):
 2. Cross-reference with `bd list` to find open epics
 3. If existing epics found: present them via `AskUserQuestion` — "Resume an existing epic or start a new one?"
 4. If starting new: ask for an epic name via `AskUserQuestion`
-5. Create epic: `git worktree add .worktrees/<epic> -b <epic>`
+5. Create epic via worktree-setup.sh: `eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" <bead-id>)"` (create the bd epic first, then run the script with its ID)
 6. Initialize beads in epic worktree: `git -C .worktrees/<epic> config beads.role maintainer`
 7. Create bd epic issue and break down into tasks
 8. **Stay on `main`** — do NOT cd into the epic worktree
@@ -116,6 +116,12 @@ Example:
 #### Sub-Agent Worktree Dispatch
 
 > **Warning:** The coordinator MUST create the worktree before dispatch. Never ask the agent to create its own worktree -- agents skip this step and pollute main.
+
+> **CRITICAL**: All worktrees MUST be direct children of `<repo-root>/.worktrees/`.
+> Nested worktrees (`.worktrees/epic/.worktrees/task/`) are a bug.
+> The worktree-setup.sh script prevents this automatically. Never bypass it.
+
+**FORBIDDEN: Never run `git worktree add` directly. ALWAYS use `worktree-setup.sh`.**
 
 **Use the worktree-setup script to create worktrees:**
 
