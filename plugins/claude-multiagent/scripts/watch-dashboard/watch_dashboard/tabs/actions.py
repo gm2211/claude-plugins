@@ -114,6 +114,26 @@ def _format_run_elapsed(run: dict) -> str:
         return _fmt_duration(max(0, elapsed))
 
 
+def _format_time_ago(run: dict) -> str:
+    """Return how long ago the run started (e.g. '5m ago', '2h ago')."""
+    created_at = _parse_gh_time(run.get("createdAt", ""))
+    if created_at is None:
+        return ""
+    ago = int(time.time()) - created_at
+    if ago < 0:
+        return "just now"
+    if ago < 60:
+        return f"{ago}s ago"
+    if ago < 3600:
+        return f"{ago // 60}m ago"
+    if ago < 86400:
+        h = ago // 3600
+        m = (ago % 3600) // 60
+        return f"{h}h {m}m ago" if m else f"{h}h ago"
+    days = ago // 86400
+    return f"{days}d ago"
+
+
 # ---------------------------------------------------------------------------
 # Repo detection
 # ---------------------------------------------------------------------------
@@ -191,7 +211,7 @@ class ActionsTab(Vertical):
 
     def on_mount(self) -> None:
         table = self.query_one("#actions-table", DataTable)
-        table.add_columns("Workflow", "Branch", "Status", "Conclusion", "Duration", "Commit")
+        table.add_columns("Workflow", "Branch", "Status", "Conclusion", "Started", "Commit")
         self._refresh_data()
 
     def get_selected_url(self) -> str:
@@ -275,7 +295,7 @@ class ActionsTab(Vertical):
             status_cell = Text(display_status, style=status_style)
             conclusion_cell = Text(conclusion, style=status_style) if conclusion else Text("")
 
-            duration = Text(_format_run_elapsed(run), style="dim")
+            duration = Text(_format_time_ago(run), style="dim")
 
             sha = (run.get("headSha") or "")[:7]
             commit_color = self._commit_color_map.get(sha, "#cdd6f4")

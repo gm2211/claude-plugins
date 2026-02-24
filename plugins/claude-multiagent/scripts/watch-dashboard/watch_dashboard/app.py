@@ -11,6 +11,7 @@ import subprocess
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, TabbedContent, TabPane
+from textual import on
 
 from .modals.help_screen import HelpScreen
 from .tabs.deploys import DeploysTab
@@ -68,6 +69,22 @@ class WatchDashboardApp(App):
         self._poll_timer = self.set_interval(
             POLL_INTERVAL, self._poll_refresh, name="poll-refresh"
         )
+        # Focus the DataTable in the initially active tab
+        self._focus_active_table()
+
+    @on(TabbedContent.TabActivated)
+    def _on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Focus the DataTable when the user switches tabs."""
+        self._focus_active_table()
+
+    def _focus_active_table(self) -> None:
+        """Focus the DataTable in whichever tab is currently active."""
+        active = self._get_active_tab_id()
+        table_id = "deploy-table" if active == "deploys-pane" else "actions-table"
+        try:
+            self.query_one(f"#{table_id}", DataTable).focus()
+        except Exception:
+            pass
 
     def _poll_refresh(self) -> None:
         """Timer-driven refresh of the active tab."""

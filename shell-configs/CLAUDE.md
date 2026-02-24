@@ -2,12 +2,16 @@
 
 Terminal setup: kitty + zellij with Catppuccin Mocha theme, Fira Code font, and Cmd-based keybindings for macOS.
 
+> **Important:** Always prompt the user for confirmation before installing, symlinking, or overwriting any of these configs. Never install anything automatically.
+
 ## Prerequisites
 
 ```bash
 brew install kitty zellij lazygit
 brew install --cask font-symbols-only-nerd-font font-meslo-lg-nerd-font
 ```
+
+zjstatus (Zellij status bar plugin) is auto-downloaded as a WASM plugin from the layout config on first launch — no manual install needed.
 
 - **kitty** -- terminal emulator
 - **zellij** -- terminal multiplexer (replaces tmux)
