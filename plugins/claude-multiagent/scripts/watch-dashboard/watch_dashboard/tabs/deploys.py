@@ -77,7 +77,7 @@ class DeploysTab(Vertical):
 
     def on_mount(self) -> None:
         table = self.query_one("#deploy-table", DataTable)
-        table.add_columns("Commit", "Message", "Build", "Deploy", "Elapsed")
+        table.add_columns("Commit", "Version", "Message", "Build", "Deploy", "Elapsed")
         self._refresh_data()
 
     def get_selected_url(self) -> str:
@@ -153,6 +153,8 @@ class DeploysTab(Vertical):
 
         for rec in records:
             commit = Text(rec.get("commit", "")[:7], style="bold")
+            version_str = rec.get("tag", "") or rec.get("version", "")
+            version = Text(version_str, style="#cba6f7") if version_str else Text("")
             msg = rec.get("message", "")
             if len(msg) > 50:
                 msg = msg[:48] + ".."
@@ -161,7 +163,7 @@ class DeploysTab(Vertical):
             deploy = _status_text(rec.get("deploy_status", ""))
             elapsed = Text(format_elapsed(rec), style="dim")
 
-            table.add_row(commit, message, build, deploy, elapsed)
+            table.add_row(commit, version, message, build, deploy, elapsed)
             self._urls.append(rec.get("service_url", ""))
 
         # Status line

@@ -179,6 +179,7 @@ def cmd_list():
 
         record = {
             "commit": commit_id[:7] if commit_id else "",
+            "tag": "",
             "message": commit_msg,
             "author": deploy.get("creator", {}).get("name", "")
                       or deploy.get("creator", {}).get("email", ""),

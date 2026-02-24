@@ -36,16 +36,17 @@ Output JSON lines (one JSON object per line), one per deploy, most recent first:
 
 #### Field reference
 
-| Field            | Type   | Description                          |
-|------------------|--------|--------------------------------------|
-| `commit`         | string | Short commit hash                    |
-| `message`        | string | Commit message (first line)          |
-| `author`         | string | Author name or login                 |
-| `build_status`   | string | Build status (see below)             |
-| `deploy_status`  | string | Deploy status (see below)            |
-| `build_started`  | string | Unix timestamp when build started    |
-| `deploy_finished`| string | Unix timestamp when deploy completed |
-| `service_url`    | string | Public URL of the service            |
+| Field            | Type   | Required | Description                                              |
+|------------------|--------|----------|----------------------------------------------------------|
+| `commit`         | string | yes      | Short commit hash                                        |
+| `message`        | string | yes      | Commit message (first line)                              |
+| `author`         | string | yes      | Author name or login                                     |
+| `build_status`   | string | yes      | Build status (see below)                                 |
+| `deploy_status`  | string | yes      | Deploy status (see below)                                |
+| `build_started`  | string | yes      | Unix timestamp when build started                        |
+| `deploy_finished`| string | yes      | Unix timestamp when deploy completed                     |
+| `service_url`    | string | no       | Public URL of the service                                |
+| `tag`            | string | no       | Git tag or version string associated with this deploy (e.g. `v1.2.3`). Omit or set to `""` if not available. |
 
 #### Status values
 

@@ -83,17 +83,27 @@ cmd_list() {
     if ! raw=$(gh run list \
         --repo "$repo" \
         --limit 5 \
-        --json "headSha,workflowName,headBranch,status,conclusion,createdAt,updatedAt,url" \
+        --json "headSha,workflowName,headBranch,event,status,conclusion,createdAt,updatedAt,url" \
         2>/dev/null); then
         echo "Error: gh run list failed for repo '$repo'" >&2
         exit 1
     fi
 
     # Parse each run with jq and emit JSONL
+    # tag: use headBranch if it looks like a semver tag (starts with v and matches v<digits>...)
+    #      or if the event is "release", otherwise empty string
     echo "$raw" | jq -c '.[] | {
         commit: (.headSha[:7]),
         message: (.workflowName + " [" + .headBranch + "]"),
         author: "",
+        tag: (
+            if (.headBranch | test("^v[0-9]"))
+            then .headBranch
+            elif (.event == "release")
+            then .headBranch
+            else ""
+            end
+        ),
         build_status: (
             if .status == "completed" then
                 if .conclusion == "success" then "success"
