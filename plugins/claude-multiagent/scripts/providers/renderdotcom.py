@@ -134,11 +134,24 @@ def cmd_config():
     print(json.dumps(config))
 
 
+def _infer_environment(service_name: str) -> str:
+    """Infer environment from a service name string."""
+    name = service_name.lower()
+    if "prod" in name or "production" in name:
+        return "prod"
+    if "staging" in name or "stg" in name:
+        return "staging"
+    if "dev" in name or "development" in name or "preview" in name:
+        return "dev"
+    return ""
+
+
 def cmd_list():
     service_id, api_key = get_config_from_env()
 
-    # Get service details for the URL
+    # Get service details for the URL and environment inference
     service_url = ""
+    service_name = ""
     try:
         service = api_get(f"/services/{service_id}", api_key)
         if isinstance(service, dict):
@@ -146,8 +159,11 @@ def cmd_list():
                 service.get("serviceDetails", {}).get("url", "")
                 or service.get("url", "")
             )
+            service_name = service.get("name", "")
     except SystemExit:
         _log.warning("Failed to fetch service details (non-fatal)")
+
+    environment = _infer_environment(service_name)
 
     # Get recent deploys
     deploys_raw = api_get(f"/services/{service_id}/deploys?limit=10", api_key)
@@ -183,6 +199,7 @@ def cmd_list():
             "message": commit_msg,
             "author": deploy.get("creator", {}).get("name", "")
                       or deploy.get("creator", {}).get("email", ""),
+            "environment": environment,
         }
 
         # Map build/deploy status

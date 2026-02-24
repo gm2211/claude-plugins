@@ -92,6 +92,7 @@ cmd_list() {
     # Parse each run with jq and emit JSONL
     # tag: use headBranch if it looks like a semver tag (starts with v and matches v<digits>...)
     #      or if the event is "release", otherwise empty string
+    # environment: inferred from branch name or event
     echo "$raw" | jq -c '.[] | {
         commit: (.headSha[:7]),
         message: (.workflowName + " [" + .headBranch + "]"),
@@ -101,6 +102,15 @@ cmd_list() {
             then .headBranch
             elif (.event == "release")
             then .headBranch
+            else ""
+            end
+        ),
+        environment: (
+            if (.event == "release") then "prod"
+            elif (.headBranch | test("^v[0-9]")) then "prod"
+            elif (.headBranch == "main" or .headBranch == "master") then "prod"
+            elif (.headBranch == "staging" or .headBranch == "stg") then "staging"
+            elif (.headBranch == "dev" or .headBranch == "develop") then "dev"
             else ""
             end
         ),

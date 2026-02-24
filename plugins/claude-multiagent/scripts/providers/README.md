@@ -47,6 +47,7 @@ Output JSON lines (one JSON object per line), one per deploy, most recent first:
 | `deploy_finished`| string | yes      | Unix timestamp when deploy completed                     |
 | `service_url`    | string | no       | Public URL of the service                                |
 | `tag`            | string | no       | Git tag or version string associated with this deploy (e.g. `v1.2.3`). Omit or set to `""` if not available. |
+| `environment`    | string | no       | Deployment target environment (e.g., `prod`, `staging`, `dev`). Omit or empty if unknown. |
 
 #### Status values
 

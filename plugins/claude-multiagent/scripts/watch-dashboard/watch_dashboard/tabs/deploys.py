@@ -30,6 +30,32 @@ _log = logging.getLogger("watch-dashboard")
 # Status styling helpers
 # ---------------------------------------------------------------------------
 
+_ENV_STYLES: dict[str, str] = {
+    "prod": "bold #f38ba8",
+    "production": "bold #f38ba8",
+    "staging": "#f9e2af",
+    "stg": "#f9e2af",
+    "dev": "#a6e3a1",
+    "development": "#a6e3a1",
+    "preview": "#a6e3a1",
+}
+
+_ENV_ABBREV: dict[str, str] = {
+    "production": "prod",
+    "development": "dev",
+    "staging": "staging",
+    "stg": "stg",
+    "preview": "preview",
+}
+
+
+def _env_text(env: str) -> Text:
+    key = env.lower().strip()
+    style = _ENV_STYLES.get(key, "dim")
+    label = _ENV_ABBREV.get(key, key) if key else ""
+    return Text(label, style=style)
+
+
 _STATUS_STYLES: dict[str, str] = {
     "live": "bold #a6e3a1",
     "success": "bold #a6e3a1",
@@ -77,7 +103,7 @@ class DeploysTab(Vertical):
 
     def on_mount(self) -> None:
         table = self.query_one("#deploy-table", DataTable)
-        table.add_columns("Commit", "Version", "Message", "Build", "Deploy", "Elapsed")
+        table.add_columns("Commit", "Version", "Env", "Message", "Build", "Deploy", "Elapsed")
         self._refresh_data()
 
     def get_selected_url(self) -> str:
@@ -155,6 +181,7 @@ class DeploysTab(Vertical):
             commit = Text(rec.get("commit", "")[:7], style="bold")
             version_str = rec.get("tag", "") or rec.get("version", "")
             version = Text(version_str, style="#cba6f7") if version_str else Text("")
+            env = _env_text(rec.get("environment", ""))
             msg = rec.get("message", "")
             if len(msg) > 50:
                 msg = msg[:48] + ".."
@@ -163,7 +190,7 @@ class DeploysTab(Vertical):
             deploy = _status_text(rec.get("deploy_status", ""))
             elapsed = Text(format_elapsed(rec), style="dim")
 
-            table.add_row(commit, version, message, build, deploy, elapsed)
+            table.add_row(commit, version, env, message, build, deploy, elapsed)
             self._urls.append(rec.get("service_url", ""))
 
         # Status line
