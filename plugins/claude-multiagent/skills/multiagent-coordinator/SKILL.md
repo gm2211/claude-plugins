@@ -83,30 +83,40 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 
 ### Worktrees — Epic Isolation
 
-**Never develop on `main` directly.** The coordinator stays on `main` and manages epics from the repo root.
+**Never develop on `main` directly.** The coordinator is launched inside the epic worktree by a wrapper script and never operates on `main`.
 
 #### Three-Tier Hierarchy
 
 ```
-main (coordinator lives here, never leaves)
-├── .worktrees/<epic>/              ← epic worktree (long-lived feature branch)
+main (never used directly — wrapper script prevents this)
+├── .worktrees/<epic>/              ← coordinator runs HERE (launched by wrapper)
 ├── .worktrees/<epic>--<task>/      ← task worktree (sub-agent works here)
-└── .worktrees/<other-epic>/        ← another epic (possibly another coordinator)
+└── .worktrees/<other-epic>/        ← another coordinator instance
+```
+
+#### Detecting Repo Root from Epic Worktree
+
+Since the coordinator runs inside the epic worktree, use this to find the main repo root when needed (worktree management, merging to main, etc.):
+
+```bash
+REPO_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
 ```
 
 #### On Session Start
 
-When `<WORKTREE_SETUP>` tag is present (you're on the default branch):
-1. Check for existing epic worktrees listed in the tag
-2. Cross-reference with `bd list` to find open epics
-3. If existing epics found: present them via `AskUserQuestion` — "Resume an existing epic or start a new one?"
-4. If starting new: ask for an epic name via `AskUserQuestion`
-5. Create epic via worktree-setup.sh: `eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" <bead-id>)"` (create the bd epic first, then run the script with its ID)
-6. Initialize beads in epic worktree: `git -C .worktrees/<epic> config beads.role maintainer`
-7. Create bd epic issue and break down into tasks
-8. **Stay on `main`** — do NOT cd into the epic worktree
+When `<WORKTREE_STATE>` tag is present (normal case — you're in your epic worktree):
+1. You're already in the right place. Proceed normally.
+2. Check `bd list` for open tasks under this epic
+3. Check for existing task worktrees in the repo root's `.worktrees/` directory
 
-When `<WORKTREE_STATE>` tag is present: you're already in a worktree (likely a sub-agent). Proceed normally.
+When `<WORKTREE_GUARD>` tag is present (you're on main — something went wrong):
+1. Do NOT proceed with any work
+2. Show the user the worktree options from the guard message
+3. Tell them to exit and restart from a worktree
+4. Refuse all feature/bug requests until they comply
+
+When `<WORKTREE_SETUP>` tag is present (legacy/fallback — on main without guard):
+1. Same as WORKTREE_GUARD — refuse to work, tell user to restart from a worktree
 
 #### Naming Convention
 
@@ -137,14 +147,14 @@ Example:
 
 **FORBIDDEN: Never run `git worktree add` directly. ALWAYS use `worktree-setup.sh`.**
 
-**Use the worktree-setup script to create worktrees:**
+**Use the worktree-setup script to create worktrees (can be called from within the epic worktree):**
 
 ```bash
 eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" <bead-id>)"
 # Now WORKTREE_PATH, WORKTREE_BRANCH, WORKTREE_TYPE, EPIC_SLUG are set
 ```
 
-The script enforces naming conventions and prevents common mistakes (nesting, wrong branch). It reads bead metadata via `bd show` to determine epic vs task, generates slugs, and creates the worktree with the correct `<epic>--<task>` naming.
+The script enforces naming conventions and prevents common mistakes (nesting, wrong branch). It reads bead metadata via `bd show` to determine epic vs task, generates slugs, and creates the worktree with the correct `<epic>--<task>` naming. The script automatically resolves REPO_ROOT to the main repo root, so task worktrees are always created at `<repo-root>/.worktrees/<epic>--<task>/`.
 
 **After creating the worktree, include a confinement block at the TOP of every agent prompt** (before anything else):
 ```
@@ -163,6 +173,7 @@ The `--assignee` value must match the `name` parameter passed to `Task`.
 #### Multiple Coordinators
 
 Multiple coordinators on the same repo are safe without locking:
+- Each coordinator runs in its own epic worktree — they never share `main`
 - `git worktree add` is atomic — two coordinators cannot create the same epic worktree
 - bd ownership shows which epics are claimed
 - Merge targets are disjoint — each coordinator only merges into its own epics
@@ -227,18 +238,23 @@ bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build c
 
 ## Merging & Cleanup
 
+First, resolve repo root (needed for all merge and cleanup commands):
+```bash
+REPO_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
+```
+
 **Task → Epic (when sub-agent completes):**
-1. From main: `git -C .worktrees/<epic> merge <epic>--<task-slug>`
-2. `git worktree remove .worktrees/<epic>--<task-slug>`
+1. Already on the epic branch — merge directly: `git merge <epic>--<task-slug>`
+2. `git worktree remove "${REPO_ROOT}/.worktrees/<epic>--<task-slug>"`
 3. `git branch -d <epic>--<task-slug>`
 4. `bd close <task-id> --reason "merged into <epic>"`
 
 **Epic → Main (when all tasks complete):**
-1. From main: `git merge <epic>`
-2. `git worktree remove .worktrees/<epic>`
+1. Merge into main from the epic worktree: `git -C "${REPO_ROOT}" merge <epic>`
+2. `git worktree remove "${REPO_ROOT}/.worktrees/<epic>"`
 3. `git branch -d <epic>`
 4. `bd close <epic-id> --reason "shipped"`
-5. `git push`
+5. `git -C "${REPO_ROOT}" push`
 
 Epics are the unit of shipment. Only push when an epic merges to main.
 
