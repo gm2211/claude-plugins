@@ -9,7 +9,7 @@ layout {
                 format_space "#[bg=#1e1e2e]"
 
                 border_enabled  "false"
-                hide_frame_for_single_pane "true"
+                hide_frame_for_single_pane "false"
                 background "#1e1e2e"
                 color_bg "#1e1e2e"
 
