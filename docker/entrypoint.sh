@@ -55,6 +55,33 @@ CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --s
 log_success "Cloned $REPO (branch: $CURRENT_BRANCH)"
 
 # ---------------------------------------------------------------------------
+# 3a. No-push mode — block git push at the hook level
+# ---------------------------------------------------------------------------
+if [ "${NO_PUSH:-}" = "true" ]; then
+    log_info "NO_PUSH mode enabled — git push is blocked"
+
+    # Install a pre-push hook that rejects all pushes
+    mkdir -p /home/claude/repo/.git/hooks
+    cat > /home/claude/repo/.git/hooks/pre-push << 'HOOK'
+#!/bin/sh
+echo "" >&2
+echo "═══════════════════════════════════════════════════════" >&2
+echo "  PUSH BLOCKED — running in --no-push mode" >&2
+echo "  All work is committed locally. Review and push" >&2
+echo "  manually when ready." >&2
+echo "═══════════════════════════════════════════════════════" >&2
+echo "" >&2
+exit 1
+HOOK
+    chmod +x /home/claude/repo/.git/hooks/pre-push
+
+    # Also remove the credential helper so push can't work even if hook is bypassed
+    git config --global --unset credential.helper 2>/dev/null || true
+
+    log_success "Pre-push hook installed — pushes will be rejected"
+fi
+
+# ---------------------------------------------------------------------------
 # 4. Initialize Beads
 # ---------------------------------------------------------------------------
 if command -v bd &>/dev/null; then
@@ -94,6 +121,24 @@ cat > /home/claude/repo/.claude/settings.local.json << 'SETTINGS'
   }
 }
 SETTINGS
+
+# When NO_PUSH is enabled, also deny git push at the Claude permissions level
+if [ "${NO_PUSH:-}" = "true" ]; then
+    # Inject a deny entry for git push into the settings file
+    python3 - /home/claude/repo/.claude/settings.local.json << 'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+cfg.setdefault("permissions", {}).setdefault("deny", [])
+if "Bash(git push:*)" not in cfg["permissions"]["deny"]:
+    cfg["permissions"]["deny"].append("Bash(git push:*)")
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+    log_info "Claude permissions updated — git push is denied"
+fi
 
 log_info "Claude project settings written"
 
