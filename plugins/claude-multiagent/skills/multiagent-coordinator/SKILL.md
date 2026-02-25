@@ -273,3 +273,12 @@ Git-backed issue tracker at `~/.local/bin/bd`. Run `bd --help` for commands. Set
 Zellij actions: ONLY `new-pane` and `move-focus`. NEVER `close-pane`, `close-tab`, `go-to-tab`.
 
 Deploy pane monitors deployment status. After push, check it before closing ticket. Config: `.deploy-watch.json`. Keys: `p`=configure, `r`=refresh. If MCP tools `mcp__render__*` available, auto-configure by discovering service ID. Disable: `deploy_pane: disabled` in `.claude/claude-multiagent.local.md`.
+
+## Autonomous No-Push Mode
+
+When `NO_PUSH=true` is set (detected via environment variable or CLAUDE.md instructions):
+
+- **Skip all push steps.** After merging epic→main, do NOT run `git push`. Move immediately to next work.
+- **Skip review gates.** Do not pause for user approval between tasks or epics.
+- **Continuous work.** After every task completion: merge → close ticket → check `bd ready` → assign next task. Repeat until no work remains.
+- **Final summary.** When all beads are closed: list completed tickets, files changed, and tell the user to `git push` when ready.
