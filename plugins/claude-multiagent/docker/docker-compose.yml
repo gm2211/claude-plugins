@@ -1,8 +1,8 @@
 services:
   claude:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: ../../..
+      dockerfile: plugins/claude-multiagent/docker/Dockerfile
     image: claude-multiagent
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}

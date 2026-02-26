@@ -25,8 +25,8 @@ When this skill is invoked:
 
 2. **Locate and execute the launch script:**
    The script lives relative to the plugin installation. Find it by checking these paths in order:
-   - `${CLAUDE_PLUGIN_ROOT}/../../docker/launch.sh` (when running from plugin cache)
-   - The repo root's `docker/launch.sh` (when running from the source repo)
+   - `${CLAUDE_PLUGIN_ROOT}/docker/launch.sh` (when running from plugin cache)
+   - The repo root's `plugins/claude-multiagent/docker/launch.sh` (when running from the source repo)
 
    Run via Bash tool. The script is interactive — it handles GitHub auth, repo selection, image building, and container launch/attach.
 
