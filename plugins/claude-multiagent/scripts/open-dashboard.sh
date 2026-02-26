@@ -52,7 +52,7 @@ trap cleanup_lock EXIT
 # The focused tab contains focus=true in its tab declaration.
 get_focused_tab_layout() {
   local layout
-  layout=$(zellij action dump-layout 2>/dev/null) || return 1
+  layout=$(timeout 5 zellij action dump-layout 2>/dev/null) || return 1
 
   local in_focused=0
   local depth=0
@@ -208,13 +208,20 @@ count_claude_panes() {
 
 # If not inside Zellij, bail silently
 if [[ -z "${ZELLIJ:-}" ]]; then
+  echo "SKIPPED:not_in_zellij"
   exit 0
 fi
 
 # Only open dashboard panes inside a git repository
-git rev-parse --is-inside-work-tree &>/dev/null || exit 0
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+  echo "SKIPPED:not_git_repo"
+  exit 0
+fi
 
-focused_tab=$(get_focused_tab_layout) || exit 0
+if ! focused_tab=$(get_focused_tab_layout); then
+  echo "FAILED:dump_layout_timeout_or_error"
+  exit 0
+fi
 
 # Strip Zellij saved-layout artifacts (start_suspended panes) so they don't
 # cause false-positive detections of existing dashboard panes.
@@ -224,9 +231,7 @@ focused_tab=$(strip_suspended_panes "$focused_tab")
 claude_count=$(count_claude_panes "$focused_tab" "$PROJECT_DIR")
 if [[ "$claude_count" -gt 1 ]]; then
   # Another Claude instance already has dashboard panes in this tab.
-  echo "COORDINATOR MODE: DASHBOARD PANES NOT OPENED."
-  echo "ANOTHER CLAUDE SESSION IS ALREADY RUNNING IN THIS ZELLIJ TAB."
-  echo "START THIS SESSION IN A DIFFERENT ZELLIJ TAB FOR THE FULL DASHBOARD EXPERIENCE."
+  echo "SKIPPED:multi_session — another Claude session is already running in this Zellij tab. Start this session in a different Zellij tab for the full dashboard experience."
   exit 0
 fi
 
@@ -287,6 +292,7 @@ fi
 
 if $all_present; then
   # All expected panes already exist -- nothing to do
+  echo "PANES_EXIST"
   exit 0
 fi
 
@@ -309,7 +315,11 @@ if $beads_pane_enabled && [[ "$has_beads" -eq 0 ]]; then
   # Create beads pane to the right of Claude. Focus moves to beads.
   BEADS_TUI_DIR="${SCRIPT_DIR}/beads-tui"
   _bd_path="$(command -v bd 2>/dev/null || true)"
-  BDT_ARGS=(--db-path "${PROJECT_DIR}/.beads/beads.db")
+  # Resolve db path through git to the main repo root so worktrees find the
+  # actual Dolt database (which lives at <main-repo>/.beads/dolt, not in the
+  # worktree directory).
+  _repo_root="$(dirname "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null)" || _repo_root="$PROJECT_DIR"
+  BDT_ARGS=(--db-path "${_repo_root}/.beads/dolt")
   [[ -n "$_bd_path" ]] && BDT_ARGS+=(--bd-path "$_bd_path")
 
   # When running from the plugin cache, run.sh and .venv may be missing even
@@ -346,6 +356,9 @@ if $beads_pane_enabled && [[ "$has_beads" -eq 0 ]]; then
       -- bash -c 'echo ""; echo "  beads-tui (bdt) is not installed."; echo ""; echo "  Install it with:"; echo "    pipx install beads-tui"; echo ""; echo "  Press Enter to close this pane."; read' 2>/dev/null || true
   fi
 fi
+
+# Signal success — panes are being created (some may launch in background below)
+echo "PANES_CREATED"
 
 # Launch watch-dashboard pane (unified deploys + gh-actions) below beads.
 # If beads already occupies the right column, the dashboard splits downward.

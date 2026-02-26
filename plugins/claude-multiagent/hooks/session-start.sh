@@ -260,10 +260,20 @@ coordinator_escaped=$(escape_for_json "$coordinator_content")
 # and relayed to the model via additionalContext.
 dashboard_output=$("${PLUGIN_ROOT}/scripts/open-dashboard.sh" "${PWD}" 2>&1) || true
 
-# Build the dashboard status note for the model
-dashboard_note="The Zellij dashboard panes are already open."
-if [[ -n "$dashboard_output" ]]; then
-  dashboard_note="Dashboard script output: ${dashboard_output}"
+# Build the dashboard status note for the model based on explicit status codes
+# from open-dashboard.sh: PANES_CREATED, PANES_EXIST, SKIPPED:reason, FAILED:reason
+if [[ -z "$dashboard_output" ]]; then
+  dashboard_note="Dashboard status unknown — use /panes to retry."
+elif [[ "$dashboard_output" == *"PANES_CREATED"* ]]; then
+  dashboard_note="Dashboard panes created successfully."
+elif [[ "$dashboard_output" == *"PANES_EXIST"* ]]; then
+  dashboard_note="The Zellij dashboard panes are already open."
+elif [[ "$dashboard_output" == *"SKIPPED:"* ]]; then
+  dashboard_note="Dashboard skipped: ${dashboard_output#*SKIPPED:}"
+elif [[ "$dashboard_output" == *"FAILED:"* ]]; then
+  dashboard_note="Dashboard failed: ${dashboard_output#*FAILED:}. Use /panes to retry."
+else
+  dashboard_note="Dashboard status unknown (${dashboard_output}) — use /panes to retry."
 fi
 dashboard_note_escaped=$(escape_for_json "$dashboard_note")
 
