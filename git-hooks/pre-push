@@ -65,6 +65,7 @@ fi
 # push again with the new SHA.
 
 MARKETPLACE_JSON=".claude-plugin/marketplace.json"
+PLUGIN_JSON="plugins/claude-multiagent/.claude-plugin/plugin.json"
 
 # Collect plugins that need bumping across all pushed refs.
 # Format: newline-separated "PLUGIN_NAME OLD_VERSION"
@@ -178,6 +179,25 @@ if new_version is not None:
     print(new_version)
 " 2>/dev/null)
 
+    # Also bump version in plugin.json to keep both files in sync
+    if [ -n "$NEW_VERSION" ] && [ -f "$PLUGIN_JSON" ]; then
+        python3 -c "
+import json
+
+plugin_json_path = '$PLUGIN_JSON'
+new_version = '$NEW_VERSION'
+
+with open(plugin_json_path) as f:
+    data = json.load(f)
+
+data['version'] = new_version
+
+with open(plugin_json_path, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" 2>/dev/null
+    fi
+
     BUMP_SUMMARY="${BUMP_SUMMARY}  Auto-bumped ${PLUGIN_NAME}: ${OLD_VERSION} -> ${NEW_VERSION}
 "
 done <<EOF
@@ -185,6 +205,7 @@ $NEEDS_BUMP
 EOF
 
 git add "$MARKETPLACE_JSON"
+git add "$PLUGIN_JSON"
 git commit --amend --no-edit
 
 echo "" >&2
