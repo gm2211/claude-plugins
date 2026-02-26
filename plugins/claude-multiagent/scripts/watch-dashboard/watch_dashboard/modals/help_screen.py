@@ -26,6 +26,12 @@ HELP_TEXT = """\
   [bold]p[/bold]                Configure / change deploy provider
   [bold]d[/bold]                Disable dashboard pane for this project
 
+[bold underline]Tab configuration (.deploy-watch.json)[/bold underline]
+  Each tab can be enabled/disabled independently:
+    [dim]{ "tabs": { "actions": { "enabled": false } } }[/dim]
+  Actions tab accepts an optional repo override:
+    [dim]{ "tabs": { "actions": { "repo": "owner/repo" } } }[/dim]
+
 [dim]Auto-refreshes every 30 seconds.[/dim]
 [dim]Press Escape to close.[/dim]"""
 

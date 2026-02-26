@@ -13,6 +13,7 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, TabbedContent, TabPane
 from textual import on
 
+from .config import config_tab_enabled
 from .modals.help_screen import HelpScreen
 from .tabs.deploys import DeploysTab
 from .tabs.actions import ActionsTab
@@ -51,18 +52,27 @@ class WatchDashboardApp(App):
         self._providers_dir = providers_dir
         self._dash_id = dash_id
         self._poll_timer = None
+        self._config_file = os.path.join(project_dir, ".deploy-watch.json")
+
+    def _deploys_enabled(self) -> bool:
+        return config_tab_enabled(self._config_file, "deploys")
+
+    def _actions_enabled(self) -> bool:
+        return config_tab_enabled(self._config_file, "actions")
 
     def compose(self) -> ComposeResult:
         yield Header(icon="")
         with TabbedContent(id="tabs"):
-            with TabPane("Deploys", id="deploys-pane"):
-                yield DeploysTab(
-                    project_dir=self._project_dir,
-                    providers_dir=self._providers_dir,
-                    dash_id=self._dash_id,
-                )
-            with TabPane("Actions", id="actions-pane"):
-                yield ActionsTab(project_dir=self._project_dir)
+            if self._deploys_enabled():
+                with TabPane("Deploys", id="deploys-pane"):
+                    yield DeploysTab(
+                        project_dir=self._project_dir,
+                        providers_dir=self._providers_dir,
+                        dash_id=self._dash_id,
+                    )
+            if self._actions_enabled():
+                with TabPane("Actions", id="actions-pane"):
+                    yield ActionsTab(project_dir=self._project_dir)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -80,7 +90,12 @@ class WatchDashboardApp(App):
     def _focus_active_table(self) -> None:
         """Focus the DataTable in whichever tab is currently active."""
         active = self._get_active_tab_id()
-        table_id = "deploy-table" if active == "deploys-pane" else "actions-table"
+        if active == "deploys-pane":
+            table_id = "deploy-table"
+        elif active == "actions-pane":
+            table_id = "actions-table"
+        else:
+            return
         try:
             self.query_one(f"#{table_id}", DataTable).focus()
         except Exception:

@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Vercel deploy provider for deploy-watch.
+# Responds to: name, config, list
+#
+# Environment variables (set by watch-dashboard via DEPLOY_WATCH_* prefix):
+#   DEPLOY_WATCH_PROJECTID   — Vercel project name or ID (required)
+#   DEPLOY_WATCH_TEAMID      — Vercel team slug or ID (optional, for team projects)
+#   DEPLOY_WATCH_APIKEYENV   — name of the env var holding your Vercel token
+#                              (default: VERCEL_TOKEN)
+#
+# The Vercel token itself is read from the env var named in DEPLOY_WATCH_APIKEYENV
+# (default: VERCEL_TOKEN). It is never stored in .deploy-watch.json.
+
+set -euo pipefail
+
+CMD="${1:-}"
+
+cmd_name() {
+    echo "Vercel"
+}
+
+cmd_config() {
+    echo '{
+  "fields": [
+    {
+      "key": "projectId",
+      "label": "Project name or ID",
+      "required": true
+    },
+    {
+      "key": "teamId",
+      "label": "Team slug or ID (leave blank for personal accounts)",
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "apiKeyEnv",
+      "label": "Vercel token env var",
+      "required": false,
+      "default": "VERCEL_TOKEN"
+    }
+  ]
+}'
+}
+
+cmd_list() {
+    local project_id="${DEPLOY_WATCH_PROJECTID:-}"
+    local team_id="${DEPLOY_WATCH_TEAMID:-}"
+    local api_key_env="${DEPLOY_WATCH_APIKEYENV:-VERCEL_TOKEN}"
+    local api_key="${!api_key_env:-}"
+
+    if [[ -z "$project_id" ]]; then
+        echo "Error: DEPLOY_WATCH_PROJECTID is not set" >&2
+        exit 1
+    fi
+
+    if [[ -z "$api_key" ]]; then
+        echo "Error: environment variable ${api_key_env} is not set. Set it to your Vercel token." >&2
+        exit 1
+    fi
+
+    # Build the deployments API URL
+    local url="https://api.vercel.com/v6/deployments?projectId=${project_id}&limit=10"
+    if [[ -n "$team_id" ]]; then
+        url="${url}&teamId=${team_id}"
+    fi
+
+    local raw
+    if ! raw=$(curl -sf \
+        -H "Authorization: Bearer ${api_key}" \
+        -H "Content-Type: application/json" \
+        "$url" 2>/dev/null); then
+        echo "Error: Vercel API request failed. Check your token and project ID." >&2
+        exit 1
+    fi
+
+    # Parse the JSON response and emit JSONL records
+    echo "$raw" | jq -c '.deployments[]? | {
+        commit: ((.meta.githubCommitSha // "") | if . != "" then .[:7] else "" end),
+        message: (.meta.githubCommitMessage // .name // ""),
+        author: (.meta.githubCommitAuthorName // ""),
+        tag: "",
+        environment: (
+            if .target == "production" then "prod"
+            elif .target == "staging" then "staging"
+            elif (.target == null or .target == "") then "preview"
+            else .target
+            end
+        ),
+        build_status: (
+            if .readyState == "READY" then "success"
+            elif .readyState == "ERROR" or .readyState == "CANCELED" then
+                (if .readyState == "CANCELED" then "cancelled" else "failed" end)
+            elif .readyState == "BUILDING" or .readyState == "INITIALIZING" then "building"
+            elif .readyState == "QUEUED" then "pending"
+            else (.readyState | ascii_downcase)
+            end
+        ),
+        deploy_status: (
+            if .readyState == "READY" then "live"
+            elif .readyState == "ERROR" then "failed"
+            elif .readyState == "CANCELED" then "cancelled"
+            elif .readyState == "BUILDING" or .readyState == "INITIALIZING" then "deploying"
+            elif .readyState == "QUEUED" then "pending"
+            else (.readyState | ascii_downcase)
+            end
+        ),
+        build_started: (
+            if .createdAt != null then (.createdAt / 1000 | floor | tostring)
+            else ""
+            end
+        ),
+        deploy_finished: (
+            if (.readyState == "READY" or .readyState == "ERROR") and .ready != null then
+                (.ready / 1000 | floor | tostring)
+            else ""
+            end
+        ),
+        service_url: (
+            if .url != null and .url != "" then ("https://" + .url)
+            else ""
+            end
+        )
+    }'
+}
+
+case "$CMD" in
+    name)   cmd_name ;;
+    config) cmd_config ;;
+    list)   cmd_list ;;
+    *)
+        echo "Usage: vercel <name|config|list>" >&2
+        exit 1
+        ;;
+esac

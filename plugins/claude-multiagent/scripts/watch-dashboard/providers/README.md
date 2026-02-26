@@ -2,6 +2,14 @@
 
 Each provider is a script in this directory (`providers/`) that implements three commands.
 
+## Built-in providers
+
+| Script          | Platform       | Auth env var (default)  |
+|-----------------|----------------|-------------------------|
+| `renderdotcom`  | Render.com     | `RENDER_DOT_COM_TOK`    |
+| `github-actions`| GitHub Actions | gh CLI (`gh auth login`)|
+| `vercel`        | Vercel         | `VERCEL_TOKEN`          |
+
 ## Commands
 
 ### `./provider.sh name`

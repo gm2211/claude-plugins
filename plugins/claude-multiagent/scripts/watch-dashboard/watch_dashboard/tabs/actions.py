@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -14,6 +15,8 @@ from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 from textual import work
 from rich.text import Text
+
+from ..config import config_get_tab
 
 _log = logging.getLogger("watch-dashboard")
 
@@ -198,12 +201,19 @@ class ActionsTab(Vertical):
     def __init__(self, project_dir: str) -> None:
         super().__init__()
         self._project_dir = project_dir
-        self._repo: str | None = None
+        self._config_file = os.path.join(project_dir, ".deploy-watch.json")
+        # Repo can be overridden via config; auto-detected on first refresh otherwise.
+        self._repo: str | None = self._repo_from_config()
         self._cached_runs: list[dict] = []
         self._urls: list[str] = []
         self._fetch_error = ""
         self._last_fetch_time = 0
         self._commit_color_map: dict[str, str] = {}
+
+    def _repo_from_config(self) -> str | None:
+        """Return the repo slug from config if set, otherwise None."""
+        tab_cfg = config_get_tab(self._config_file, "actions")
+        return tab_cfg.get("repo") or None
 
     def compose(self) -> ComposeResult:
         yield DataTable(id="actions-table", cursor_type="row", zebra_stripes=True)
@@ -230,7 +240,12 @@ class ActionsTab(Vertical):
     @work(exclusive=True, thread=True)
     def _refresh_data(self) -> None:
         """Fetch workflow run data in a background thread."""
-        if not self._repo:
+        # Prefer config-supplied repo; fall back to git remote auto-detection.
+        config_repo = self._repo_from_config()
+        if config_repo:
+            self._repo = config_repo
+            _log.debug("_refresh_data: using config repo=%s", self._repo)
+        elif not self._repo:
             self._repo = _detect_repo(self._project_dir)
             _log.debug("_refresh_data: detected repo=%s", self._repo)
 
