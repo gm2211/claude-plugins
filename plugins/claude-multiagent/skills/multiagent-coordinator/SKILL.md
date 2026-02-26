@@ -111,9 +111,14 @@ When `<WORKTREE_STATE>` tag is present (normal case — you're in your epic work
 
 When `<WORKTREE_GUARD>` tag is present (you're on main — something went wrong):
 1. Do NOT proceed with any work
-2. Show the user the worktree options from the guard message
-3. Tell them to exit and restart from a worktree
-4. Refuse all feature/bug requests until they comply
+2. Tell the user to exit this session and restart from a worktree
+3. Prioritize shell functions for worktree selection — present the options in this order:
+   a. **Preferred:** Exit and run `claude` — the `claude()` shell function automatically calls `wt` (selector) or `wt new` (creator) before launching Claude in the chosen worktree
+   b. **Alternative:** Run `wt` to interactively select an existing worktree, then `claude` from inside it. Use `wt new` to create a new worktree
+   c. **If shell functions not sourced:** `source /path/to/shell-configs/zsh-functions/functions.zsh` (replace `/path/to` with the actual clone location)
+   d. **Last resort (no shell functions):** Raw git commands shown in the guard message
+4. Show any existing epic worktrees from the guard message so the user knows what's available
+5. Refuse all feature/bug requests until they restart from a worktree
 
 When `<WORKTREE_SETUP>` tag is present (legacy/fallback — on main without guard):
 1. Same as WORKTREE_GUARD — refuse to work, tell user to restart from a worktree

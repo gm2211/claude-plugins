@@ -225,8 +225,18 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
       _guard_lines+="No epic worktrees exist yet."$'\n'$'\n'
     fi
 
-    _guard_lines+="To start a new epic:"$'\n'
-    _guard_lines+="  git worktree add ${REPO_ROOT}/.worktrees/<name> -b <name> && cd ${REPO_ROOT}/.worktrees/<name> && claude"$'\n'$'\n'
+    _guard_lines+="How to get into a worktree (tell the user, in this order of preference):"$'\n'$'\n'
+    _guard_lines+="  1. Exit and run \`claude\` — the shell function will handle worktree selection automatically."$'\n'
+    _guard_lines+="     (If no worktrees exist, it falls back to \`wt new\` and prompts for a description.)"$'\n'$'\n'
+    _guard_lines+="  2. Or: run \`wt\` to interactively select an existing worktree, then run \`claude\` from inside it."$'\n'
+    _guard_lines+="     To create a new worktree instead: \`wt new\`"$'\n'$'\n'
+    _guard_lines+="  3. If the shell functions are not sourced yet:"$'\n'
+    _guard_lines+="       source /path/to/shell-configs/zsh-functions/functions.zsh"$'\n'
+    _guard_lines+="     (replace /path/to with the actual clone location of claude-plugins)"$'\n'$'\n'
+    _guard_lines+="  4. Last resort — raw git commands (use only if shell functions are unavailable):"$'\n'
+    _guard_lines+="       git worktree add ${REPO_ROOT}/.worktrees/<name> -b <name>"$'\n'
+    _guard_lines+="       cd ${REPO_ROOT}/.worktrees/<name>"$'\n'
+    _guard_lines+="       claude"$'\n'$'\n'
     _guard_lines+="ACTION REQUIRED: Tell the user to exit this session and restart Claude from a worktree directory. Do NOT proceed with any feature work, code changes, or agent dispatch."$'\n'
     _guard_lines+="</WORKTREE_GUARD>"
 
