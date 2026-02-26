@@ -56,7 +56,7 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 
 1. Create ticket with sequential ID:
    ```bash
-   "$PLUGIN_ROOT/scripts/bd-create-seq.sh" \
+   "$PLUGIN_ROOT/scripts/bd-create-with-seq-id.sh" \
      --title "..." --description "..." --type=task --priority=2
    ```
    `$PLUGIN_ROOT` is resolved to the actual plugin path at session start. This assigns `plug-<N>` (sequential) instead of random hashes. Falls back to `bd create` if the wrapper is unavailable.
