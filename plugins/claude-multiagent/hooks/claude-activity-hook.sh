@@ -103,9 +103,18 @@ do_tab_rename() {
         return
     fi
 
+    # Find which tab is currently focused (used both for the focused-tab guard and
+    # to restore focus after renaming)
+    local focused_tab
+    focused_tab="$(get_focused_tab_name)"
+
     # Compute the new tab name
     local new_name
     if [ "$mode" = "add" ]; then
+        # Don't add dot if user is already looking at this tab
+        if [ "$focused_tab" = "$our_tab_name" ] || [ "$focused_tab" = "${NOTIFICATION_PREFIX}${our_tab_name}" ]; then
+            return  # User can already see this tab
+        fi
         # Only add prefix if not already present
         if [[ "$our_tab_name" == "${NOTIFICATION_PREFIX}"* ]]; then
             return  # Already marked, nothing to do
@@ -118,10 +127,6 @@ do_tab_rename() {
         fi
         new_name="${our_tab_name#"${NOTIFICATION_PREFIX}"}"
     fi
-
-    # Find which tab is currently focused so we can restore focus afterwards
-    local focused_tab
-    focused_tab="$(get_focused_tab_name)"
 
     # Switch to our tab, rename it, then restore focus
     zellij action go-to-tab-name "$our_tab_name" 2>/dev/null || true
