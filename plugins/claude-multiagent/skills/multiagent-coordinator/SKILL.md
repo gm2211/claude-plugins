@@ -279,7 +279,7 @@ Git-backed issue tracker at `~/.local/bin/bd`. Run `bd --help` for commands. Set
 
 Zellij actions: ONLY `new-pane` and `move-focus`. NEVER `close-pane`, `close-tab`, `go-to-tab`.
 
-Deploy pane monitors deployment status. After push, check it before closing ticket. Config: `.deploy-watch.json`. Keys: `p`=configure, `r`=refresh. If MCP tools `mcp__render__*` available, auto-configure by discovering service ID. Disable: `deploy_pane: disabled` in `.claude/claude-multiagent.local.md`.
+Deploy pane monitors deployment status. After push, check it before closing ticket. Config: `.deploy-watch.json`. Keys: `p`=configure, `r`=refresh. If MCP tools `mcp__render__*` available, auto-configure by discovering service ID. Disable: set `"panes": {"dashboard": false}` in `.claude/settings.local.json`.
 
 ## Autonomous No-Push Mode
 

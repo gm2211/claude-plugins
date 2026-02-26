@@ -118,6 +118,9 @@ cat > /home/claude/repo/.claude/settings.local.json << 'SETTINGS'
   },
   "sandbox": {
     "enabled": false
+  },
+  "panes": {
+    "dashboard": false
   }
 }
 SETTINGS
@@ -143,14 +146,7 @@ fi
 log_info "Claude project settings written"
 
 # ---------------------------------------------------------------------------
-# 6. Write claude-multiagent local config
-# ---------------------------------------------------------------------------
-cat > /home/claude/repo/.claude/claude-multiagent.local.md << 'EOF'
-deploy_pane: disabled
-EOF
-
-# ---------------------------------------------------------------------------
-# 7. Write no-push autonomous mode instructions (when NO_PUSH=true)
+# 6. Write no-push autonomous mode instructions (when NO_PUSH=true)
 # ---------------------------------------------------------------------------
 if [ "${NO_PUSH:-}" = "true" ]; then
     mkdir -p /home/claude/repo/.claude

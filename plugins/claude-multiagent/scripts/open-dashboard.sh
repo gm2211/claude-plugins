@@ -7,9 +7,9 @@
 # - Detects existing dashboard panes and only creates missing ones
 # - Detects multiple Claude sessions in the same tab and warns instead of
 #   opening duplicate panes
-# - Skips beads and/or dashboard panes if disabled in plugin config
-#   (set beads_pane: disabled or dashboard_pane: disabled in
-#    .claude/claude-multiagent.local.md)
+# - Skips beads and/or dashboard panes if disabled in settings.local.json
+#   (set "panes": {"beads": false} or "panes": {"dashboard": false} in
+#    .claude/settings.local.json)
 # - Uses a lock to prevent concurrent runs from creating duplicate panes
 
 set -euo pipefail
@@ -236,24 +236,48 @@ if [[ "$claude_count" -gt 1 ]]; then
 fi
 
 # --- Check which panes are disabled ---
-# Supported keys in .claude/claude-multiagent.local.md:
-#   beads_pane: disabled      — disable the beads (ticket tracker) pane
-#   dashboard_pane: disabled  — disable the watch-dashboard (deploys + actions) pane
-#   deploy_pane: disabled     — legacy alias for dashboard_pane
+# Pane toggles are stored in .claude/settings.local.json under the "panes" key:
+#   { "panes": { "beads": true, "dashboard": true } }
+# Set a pane to false to disable it.  Missing keys default to enabled.
+# Both project-level and home-level settings files are checked.
+# Legacy: .claude/claude-multiagent.local.md keys (beads_pane/dashboard_pane/
+# deploy_pane: disabled) are also honoured as a fallback.
 beads_pane_enabled=true
 dashboard_pane_enabled=true
-for config_path in \
-  "${PROJECT_DIR}/.claude/claude-multiagent.local.md" \
-  "${HOME}/.claude/claude-multiagent.local.md"; do
-  if [[ -f "$config_path" ]]; then
-    if grep -q 'beads_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+
+# Helper: read a pane toggle from settings.local.json via jq.
+# Usage: _pane_enabled <json-file> <pane-name>
+# Returns "false" if the pane is explicitly disabled, empty otherwise.
+_pane_disabled_in_json() {
+  local json_file="$1" pane_name="$2"
+  if [[ -f "$json_file" ]] && command -v jq &>/dev/null; then
+    # .panes.<name> == false  →  output "disabled"
+    if jq -e --arg p "$pane_name" '.panes[$p] == false' "$json_file" &>/dev/null; then
+      echo "disabled"
+    fi
+  fi
+}
+
+for config_dir in "${PROJECT_DIR}/.claude" "${HOME}/.claude"; do
+  # Primary: settings.local.json
+  _settings="${config_dir}/settings.local.json"
+  if [[ "$(_pane_disabled_in_json "$_settings" "beads")" == "disabled" ]]; then
+    beads_pane_enabled=false
+  fi
+  if [[ "$(_pane_disabled_in_json "$_settings" "dashboard")" == "disabled" ]]; then
+    dashboard_pane_enabled=false
+  fi
+
+  # Legacy fallback: claude-multiagent.local.md
+  _legacy="${config_dir}/claude-multiagent.local.md"
+  if [[ -f "$_legacy" ]]; then
+    if grep -q 'beads_pane:[[:space:]]*disabled' "$_legacy" 2>/dev/null; then
       beads_pane_enabled=false
     fi
-    if grep -q 'dashboard_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+    if grep -q 'dashboard_pane:[[:space:]]*disabled' "$_legacy" 2>/dev/null; then
       dashboard_pane_enabled=false
     fi
-    # Legacy: deploy_pane also disables the unified dashboard
-    if grep -q 'deploy_pane:[[:space:]]*disabled' "$config_path" 2>/dev/null; then
+    if grep -q 'deploy_pane:[[:space:]]*disabled' "$_legacy" 2>/dev/null; then
       dashboard_pane_enabled=false
     fi
   fi
@@ -261,10 +285,10 @@ done
 
 # Log disabled panes so users can see why panes are missing
 if ! $beads_pane_enabled; then
-  echo "Beads pane disabled. Edit .claude/claude-multiagent.local.md to re-enable."
+  echo "Beads pane disabled. Set \"panes\": {\"beads\": true} in .claude/settings.local.json to re-enable."
 fi
 if ! $dashboard_pane_enabled; then
-  echo "Dashboard pane disabled. Edit .claude/claude-multiagent.local.md to re-enable."
+  echo "Dashboard pane disabled. Set \"panes\": {\"dashboard\": true} in .claude/settings.local.json to re-enable."
 fi
 
 # --- Detect existing dashboard panes ---

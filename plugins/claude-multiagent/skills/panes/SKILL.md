@@ -26,13 +26,22 @@ Check the output for panes named `dashboard-beads-*` and `dashboard-watch-*`:
 
 ### 3. Check which panes are disabled
 
-Read (if they exist):
-- `.claude/claude-multiagent.local.md` (project-level)
-- `~/.claude/claude-multiagent.local.md` (home-level)
+Read `.claude/settings.local.json` (project-level) and `~/.claude/settings.local.json` (home-level), if they exist. Look at the `"panes"` key:
+
+```json
+{
+  "panes": {
+    "beads": false,
+    "dashboard": false
+  }
+}
+```
 
 Disabled conditions:
-- `beads_pane: disabled` in either file → beads pane is disabled
-- `dashboard_pane: disabled` or `deploy_pane: disabled` in either file → watch pane is disabled
+- `"panes": {"beads": false}` in either file → beads pane is disabled
+- `"panes": {"dashboard": false}` in either file → watch pane is disabled
+
+Missing keys default to enabled (true).
 
 ### 4. If all expected panes are already present
 
@@ -53,10 +62,10 @@ For each missing disabled pane, use `AskUserQuestion` to ask:
 - watch pane disabled and missing: "The watch-dashboard (deploys/actions) pane is disabled. Re-enable it and reopen the pane?"
 
 If the user says yes:
-1. Remove the `disabled` line from `.claude/claude-multiagent.local.md` (the project-level config). If both config files contain the line, remove from both. If neither exists, skip this step.
+1. Read `.claude/settings.local.json`, set the pane to `true` under `"panes"` (e.g. `"panes": {"beads": true}`), and write it back. Do the same for `~/.claude/settings.local.json` if it also has the pane disabled. Preserve all other keys in the file.
 2. Run `open-dashboard.sh` to create the pane:
    ```bash
    "${CLAUDE_PLUGIN_ROOT}/scripts/open-dashboard.sh"
    ```
 
-If the user says no, leave the pane disabled and tell them how to re-enable it manually: edit `.claude/claude-multiagent.local.md` and remove the `disabled` line.
+If the user says no, leave the pane disabled and tell them how to re-enable it manually: set `"panes": {"<pane>": true}` in `.claude/settings.local.json`.
