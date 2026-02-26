@@ -9,13 +9,13 @@ Includes full dev environment: Zellij terminal multiplexer, Neovim with AstroNvi
 
 ```bash
 # Interactive wizard — handles everything
-./docker/launch.sh
+./plugins/claude-multiagent/docker/launch.sh
 
 # Specify a repo directly
-./docker/launch.sh owner/repo
+./plugins/claude-multiagent/docker/launch.sh owner/repo
 
 # Non-interactive (for CI/automation)
-./docker/launch.sh --prompt "fix the failing tests" owner/repo
+./plugins/claude-multiagent/docker/launch.sh --prompt "fix the failing tests" owner/repo
 ```
 
 ## Prerequisites
@@ -30,7 +30,7 @@ Includes full dev environment: Zellij terminal multiplexer, Neovim with AstroNvi
 
 The launch script uses GitHub's **device flow** — no manual token creation needed:
 
-1. Run `./docker/launch.sh`
+1. Run `./plugins/claude-multiagent/docker/launch.sh`
 2. If not authenticated, a browser opens to `github.com/login/device`
 3. Enter the one-time code shown in your terminal
 4. Authorize the GitHub CLI
@@ -63,14 +63,14 @@ For headless environments, create a fine-grained Personal Access Token:
 
 ### Interactive Development
 ```bash
-./docker/launch.sh owner/repo
+./plugins/claude-multiagent/docker/launch.sh owner/repo
 # Zellij opens inside the container
 # Type 'cc' to start Claude Code
 ```
 
 ### Non-Interactive Task
 ```bash
-./docker/launch.sh --prompt "review the codebase and create a summary" owner/repo
+./plugins/claude-multiagent/docker/launch.sh --prompt "review the codebase and create a summary" owner/repo
 ```
 
 ### Docker Compose
@@ -78,17 +78,17 @@ For headless environments, create a fine-grained Personal Access Token:
 export ANTHROPIC_API_KEY=sk-ant-...
 export GH_TOKEN=$(gh auth token)
 export REPO=owner/repo
-docker compose -f docker/docker-compose.yml up
+docker compose -f plugins/claude-multiagent/docker/docker-compose.yml up
 ```
 
 ### Custom Branch and Model
 ```bash
-./docker/launch.sh --branch feature-x --model opus owner/repo
+./plugins/claude-multiagent/docker/launch.sh --branch feature-x --model opus owner/repo
 ```
 
 ### Force Rebuild
 ```bash
-./docker/launch.sh --rebuild owner/repo
+./plugins/claude-multiagent/docker/launch.sh --rebuild owner/repo
 ```
 
 ### Claude Code Skill
@@ -125,10 +125,10 @@ From within Claude Code:
 
 ```bash
 # From repo root
-docker build -t claude-multiagent -f docker/Dockerfile .
+docker build -t claude-multiagent -f plugins/claude-multiagent/docker/Dockerfile .
 
 # Multi-arch build
-docker buildx build --platform linux/amd64,linux/arm64 -t claude-multiagent -f docker/Dockerfile .
+docker buildx build --platform linux/amd64,linux/arm64 -t claude-multiagent -f plugins/claude-multiagent/docker/Dockerfile .
 ```
 
 ## Troubleshooting

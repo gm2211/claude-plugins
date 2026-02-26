@@ -1,7 +1,7 @@
 # =============================================================================
 # Claude Code Dev Environment with claude-multiagent plugin
 # =============================================================================
-# Build context: repo root (docker build -f docker/Dockerfile .)
+# Build context: repo root (docker build -f plugins/claude-multiagent/docker/Dockerfile .)
 # Multi-arch: supports linux/amd64 and linux/arm64 via TARGETARCH
 # =============================================================================
 
@@ -237,7 +237,7 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Entrypoint & final setup
 # ---------------------------------------------------------------------------
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY plugins/claude-multiagent/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Fix ownership of all home directory contents

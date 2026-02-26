@@ -6,7 +6,9 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# docker/ now lives inside the plugin dir; climb 3 levels to reach the repo root
+# plugins/claude-multiagent/docker -> plugins/claude-multiagent -> plugins -> repo root
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 IMAGE_NAME="claude-multiagent"
 
 # ── Color helpers ─────────────────────────────────────────────
@@ -309,7 +311,7 @@ build_image() {
 
     if [ "$force" = "true" ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
         info "Building Docker image..."
-        docker build -t "$IMAGE_NAME" -f "$REPO_ROOT/docker/Dockerfile" "$REPO_ROOT"
+        docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT"
         success "Image built successfully"
     else
         info "Using existing image (use --rebuild to force)"
@@ -404,7 +406,7 @@ launch_container() {
 
     # Interactive mode: attach a shell
     info "Attaching shell — exit to detach (container keeps running)"
-    info "Reattach later: ./docker/launch.sh --attach"
+    info "Reattach later: ./plugins/claude-multiagent/docker/launch.sh --attach"
     echo ""
     exec docker exec -it "$cid" /bin/zsh -l
 }

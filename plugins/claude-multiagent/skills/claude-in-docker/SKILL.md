@@ -32,7 +32,7 @@ Also extract any optional flags the user requested:
 Run the following to find the launch script path:
 
 ```bash
-LAUNCH_SH="${CLAUDE_PLUGIN_ROOT}/../../docker/launch.sh"
+LAUNCH_SH="${CLAUDE_PLUGIN_ROOT}/docker/launch.sh"
 if [ ! -f "$LAUNCH_SH" ]; then
   echo "ERROR: launch.sh not found at $LAUNCH_SH"
   echo "CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT}"
@@ -66,22 +66,22 @@ Construct the command based on MODE and any flags extracted in Step 1, then run 
 
 **Help mode:**
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/../../docker/launch.sh" --help
+bash "${CLAUDE_PLUGIN_ROOT}/docker/launch.sh" --help
 ```
 
 **Attach mode:**
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/../../docker/launch.sh" --attach
+bash "${CLAUDE_PLUGIN_ROOT}/docker/launch.sh" --attach
 ```
 
 **Launch mode (with specific repo):**
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/../../docker/launch.sh" [FLAGS] owner/repo
+bash "${CLAUDE_PLUGIN_ROOT}/docker/launch.sh" [FLAGS] owner/repo
 ```
 
 **Launch mode (interactive — no repo specified):**
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/../../docker/launch.sh" [FLAGS]
+bash "${CLAUDE_PLUGIN_ROOT}/docker/launch.sh" [FLAGS]
 ```
 
 Where `[FLAGS]` is built from the optional flags extracted in Step 1, for example:
