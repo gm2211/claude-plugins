@@ -257,13 +257,29 @@ REPO_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
 4. `bd close <task-id> --reason "merged into <session>"`
 
 **Session → Main (when all tasks complete):**
-1. Merge into main from the session worktree: `git -C "${REPO_ROOT}" merge <session>`
-2. `git worktree remove "${REPO_ROOT}/.worktrees/<session>"`
-3. `git branch -d <session>`
-4. `bd close <ticket-id> --reason "shipped"`
-5. `git -C "${REPO_ROOT}" push`
 
-Sessions are the unit of shipment. Only push when a session merges to main.
+Use `AskUserQuestion` to ask the user:
+
+> "All tasks complete. How do you want to ship this session?
+> 1. **Create a PR** — push the session branch and open a pull request on GitHub (recommended for team/work projects)
+> 2. **Squash merge to main** — merge locally, clean up branch, push main (recommended for personal/solo projects)"
+
+**If "Create a PR":**
+1. Push the session branch: `git -C "${REPO_ROOT}" push -u origin <session>`
+2. Create PR: `gh pr create --base main --head <session> --title "<session summary>" --body "<list of completed tickets and changes>"`
+3. Do NOT remove the worktree or branch (the PR flow will handle that)
+4. `bd close <ticket-id> --reason "PR created: <pr-url>"`
+5. Tell the user the PR URL
+
+**If "Squash merge to main":**
+1. Merge into main with squash: `git -C "${REPO_ROOT}" merge --squash <session>`
+2. Commit: `git -C "${REPO_ROOT}" commit -m "<session summary>"`
+3. `git worktree remove "${REPO_ROOT}/.worktrees/<session>"`
+4. `git branch -d <session>`
+5. `bd close <ticket-id> --reason "shipped"`
+6. `git -C "${REPO_ROOT}" push`
+
+Sessions are the unit of shipment. Only push when a session ships (either path above).
 
 Do not let worktrees or tickets accumulate.
 
@@ -285,7 +301,8 @@ Deploy pane monitors deployment status. After push, check it before closing tick
 
 When `NO_PUSH=true` is set (detected via environment variable or CLAUDE.md instructions):
 
-- **Skip all push steps.** After merging session→main, do NOT run `git push`. Move immediately to next work.
+- **Default to squash merge — no question asked.** PRs require pushing, which is disabled in this mode. Skip the `AskUserQuestion` and always use the squash-merge-to-main path.
+- **Skip all push steps.** After squash-merging session→main, do NOT run `git push`. Move immediately to next work.
 - **Skip review gates.** Do not pause for user approval between tasks or sessions.
 - **Continuous work.** After every task completion: merge → close ticket → check `bd ready` → assign next task. Repeat until no work remains.
 - **Final summary.** When all beads are closed: list completed tickets, files changed, and tell the user to `git push` when ready.
