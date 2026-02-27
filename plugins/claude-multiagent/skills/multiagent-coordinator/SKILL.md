@@ -152,16 +152,25 @@ Example:
 > Nested worktrees (`.worktrees/session/.worktrees/task/`) are a bug.
 > The worktree-setup.sh script prevents this automatically. Never bypass it.
 
-**FORBIDDEN: Never run `git worktree add` directly. ALWAYS use `worktree-setup.sh`.**
+**FORBIDDEN: Never run `git worktree add` directly.**
+**Use `prepare-agent.sh` for all agent dispatch prep (assignment + worktree + reporting block).**
 
-**Use the worktree-setup script to create worktrees (can be called from within the session worktree):**
+**Use the prepare-agent script for every dispatch (can be called from within the session worktree):**
 
 ```bash
-eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" <bead-id>)"
-# Now WORKTREE_PATH, WORKTREE_BRANCH, WORKTREE_TYPE, SESSION_SLUG are set
+eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/prepare-agent.sh" \
+  --name <agent-name> \
+  --tickets <ticket-id>)"
+# Now: WORKTREE_PATH, WORKTREE_BRANCH, AGENT_NAME, PRIMARY_TICKET, AGENT_REPORTING_BLOCK
 ```
 
-The script enforces naming conventions and prevents common mistakes (nesting, wrong branch). It reads bead metadata via `bd show` to determine the worktree type, generates slugs, and creates the worktree with the correct `<session>--<task>` naming. The script automatically resolves REPO_ROOT to the main repo root, so task worktrees are always created at `<repo-root>/.worktrees/<session>--<task>/`.
+`prepare-agent.sh` is mandatory because it:
+1. Sets `status=in_progress` and `assignee=<agent-name>` for each dispatched ticket
+2. Verifies the ticket updates persisted
+3. Creates/reuses the correct worktree via `worktree-setup.sh`
+4. Returns a preformatted `AGENT_REPORTING_BLOCK` to paste into the prompt
+
+If `prepare-agent.sh` fails, do not dispatch. Fix the ticket/worktree issue first.
 
 **After creating the worktree, include a confinement block at the TOP of every agent prompt** (before anything else):
 ```
@@ -209,6 +218,14 @@ bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build c
 > Replace `<YOUR_AGENT_NAME>` with the `name` you were given at dispatch (e.g. `worker-1`).
 >
 > If stuck >3 min, say so in Blockers. Final comment: summary, files modified, test results.
+
+If `bd comments add` fails due sandbox/Dolt access, the agent must immediately send the same update via `SendMessage` prefixed with `STATUS_UPDATE <TICKET_ID>`.
+
+When coordinator receives `STATUS_UPDATE <TICKET_ID> ...` from an agent, mirror it into beads immediately:
+
+```bash
+bd comments add <TICKET_ID> --author "<agent-name>" "<same update body>"
+```
 
 ## Visual Verification for UI Tasks
 

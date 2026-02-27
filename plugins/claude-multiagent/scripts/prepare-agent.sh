@@ -22,6 +22,7 @@
 #   WORKTREE_BRANCH=branch-name
 #   AGENT_NAME=worker-foo
 #   AGENT_TICKETS=plug-44,plug-45
+#   PRIMARY_TICKET=plug-44
 #   AGENT_REPORTING_BLOCK=<pre-formatted bd comments reporting instructions>
 #
 # Exit codes:
@@ -29,9 +30,8 @@
 #   1 — usage / argument error
 #   2 — worktree creation failed
 
-# NOTE: We do NOT use set -euo pipefail at the top level because individual
-# ticket update failures should be non-fatal (warn and continue). Instead we
-# handle errors explicitly where needed.
+# NOTE: We intentionally do not use `set -e` globally. We handle errors
+# explicitly so we can emit clear diagnostics at each step.
 set -uo pipefail
 
 ###############################################################################
@@ -59,6 +59,7 @@ Output (stdout, eval-safe):
   WORKTREE_BRANCH=...
   AGENT_NAME=...
   AGENT_TICKETS=...
+  PRIMARY_TICKET=...
   AGENT_REPORTING_BLOCK=...
 USAGE
   exit 1
@@ -146,9 +147,39 @@ for ticket in "${TICKET_ARRAY[@]}"; do
   ticket="$(echo "$ticket" | tr -d '[:space:]')"
   [ -z "$ticket" ] && continue
 
+  # Validate that the ticket exists before updating.
+  if ! "$BD" show "$ticket" --json >/dev/null 2>&1; then
+    die "Ticket does not exist or is unreadable: $ticket"
+  fi
+
   info "Updating ticket $ticket → status=in_progress, assignee=$AGENT_NAME"
   if ! "$BD" update "$ticket" --status=in_progress --assignee="$AGENT_NAME" >&2; then
-    warn "Failed to update ticket $ticket (continuing)"
+    die "Failed to update ticket $ticket (required: status=in_progress, assignee=$AGENT_NAME)"
+  fi
+
+  # Verify assignment persisted.
+  ticket_json=$("$BD" show "$ticket" --json 2>/dev/null || true)
+  assigned_ok=$(echo "$ticket_json" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    issue = d[0] if isinstance(d, list) and d else {}
+    print('1' if issue.get('assignee') == sys.argv[1] else '0')
+except Exception:
+    print('0')
+" "$AGENT_NAME" 2>/dev/null || echo "0")
+  status_ok=$(echo "$ticket_json" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    issue = d[0] if isinstance(d, list) and d else {}
+    print('1' if issue.get('status') == 'in_progress' else '0')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+
+  if [ "$assigned_ok" != "1" ] || [ "$status_ok" != "1" ]; then
+    die "Ticket verification failed for $ticket (expected assignee=$AGENT_NAME and status=in_progress)"
   fi
 done
 
@@ -209,15 +240,15 @@ done <<< "$WORKTREE_OUTPUT"
 info "Worktree ready: $WORKTREE_PATH (branch: $WORKTREE_BRANCH)"
 
 ###############################################################################
-# Build the AGENT_REPORTING_BLOCK: pre-formatted bd comments instructions with
+# Build the AGENT_REPORTING_BLOCK: pre-formatted reporting instructions with
 # agent name and primary ticket ID already substituted.
 ###############################################################################
 
 # Use printf to build the block so special characters (backticks, quotes,
 # em-dashes) are handled correctly without shell interpretation.
 AGENT_REPORTING_BLOCK="$(printf \
-'## Reporting — mandatory.\n\nEvery 60s, post a progress comment to your ticket.\nYou MUST include `--author %s` so comments show your name.\n\n```bash\nbd comments add %s --author "%s" "[<step>/<total>] <activity>\nDone: <completed since last update>\nDoing: <current work>\nBlockers: <blockers or none>\nETA: <estimate>\nFiles: <modified files>"\n```\n\nIf stuck >3 min, say so in Blockers. Final comment: summary, files modified, test results.' \
-  "$AGENT_NAME" "$PRIMARY_TICKET" "$AGENT_NAME")"
+'## Reporting — mandatory.\n\nYour FIRST status update must happen at startup (within 60s).\nThen post an update every 60s.\nYou MUST include `--author %s` so comments show your name.\n\nPreferred path:\n```bash\nbd comments add %s --author "%s" "[<step>/<total>] <activity>\nDone: <completed since last update>\nDoing: <current work>\nBlockers: <blockers or none>\nETA: <estimate>\nFiles: <modified files>"\n```\n\nFallback when `bd comments add` fails (permissions/sandbox/Dolt):\n- Send the SAME update text to the coordinator via `SendMessage`.\n- Prefix the message with: `STATUS_UPDATE %s`\n\nIf stuck >3 min, say so in Blockers. Final update: summary, files modified, test results.' \
+  "$AGENT_NAME" "$PRIMARY_TICKET" "$AGENT_NAME" "$PRIMARY_TICKET")"
 
 ###############################################################################
 # Print eval-safe variable assignments to stdout
@@ -227,6 +258,7 @@ printf 'WORKTREE_PATH=%s\n'          "$WORKTREE_PATH"
 printf 'WORKTREE_BRANCH=%s\n'        "$WORKTREE_BRANCH"
 printf 'AGENT_NAME=%s\n'             "$AGENT_NAME"
 printf 'AGENT_TICKETS=%s\n'          "$AGENT_TICKETS"
+printf 'PRIMARY_TICKET=%s\n'         "$PRIMARY_TICKET"
 printf 'AGENT_REPORTING_BLOCK=%s\n'  "$(printf '%q' "$AGENT_REPORTING_BLOCK")"
 
 exit 0

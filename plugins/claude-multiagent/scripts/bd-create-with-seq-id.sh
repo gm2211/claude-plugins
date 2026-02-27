@@ -15,6 +15,9 @@ next=$(( counter + 1 ))
 
 # Read repo's configured prefix (default to 'plug' if unset)
 prefix=$("$BD" config get issue_prefix 2>/dev/null | grep -oE '[a-zA-Z0-9_-]+' || echo "plug")
+# Normalize trailing separators so IDs never become `foo--17` or `foo__17`.
+prefix="$(printf '%s' "$prefix" | sed -E 's/[-_]+$//')"
+[ -n "$prefix" ] || prefix="plug"
 
 # Reserve the counter immediately (atomic: if two scripts race, one gets a
 # duplicate --id error from bd and can retry)
