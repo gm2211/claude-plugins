@@ -369,5 +369,22 @@ claude() {
   # Do NOT wrap wt in a subshell — a subshell loses both the TTY context required
   # for fzf/read AND the cd that switches into the chosen worktree.
   # Calling wt directly (as a shell function) lets cd propagate to this shell.
-  { wt || wt new; } && command claude "$@"
+  { wt || wt new; } || return 1
+
+  # Verify we actually ended up inside a worktree after wt ran.
+  # wt() Cases 2 and 3 return 0 (success) without cd-ing (they signal "nothing to
+  # do"), which would cause claude to launch in the original non-worktree directory.
+  # Re-checking the worktree condition here ensures the cd took effect.
+  local post_git_dir post_git_common_dir abs_post_git_dir abs_post_git_common
+  post_git_dir="$(git rev-parse --git-dir 2>/dev/null)"
+  post_git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+  abs_post_git_dir="$(cd "$post_git_dir" && pwd)"
+  abs_post_git_common="$(cd "$post_git_common_dir" && pwd)"
+
+  if [ "$abs_post_git_dir" = "$abs_post_git_common" ]; then
+    printf '%s\n' "ERROR: wt did not switch into a worktree. Aborting claude launch." >&2
+    return 1
+  fi
+
+  command claude "$@"
 }
