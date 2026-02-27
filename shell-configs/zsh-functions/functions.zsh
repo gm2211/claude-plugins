@@ -285,6 +285,28 @@ wt() {
   esac
 }
 
+# Locate a script inside the claude-multiagent plugin directory.
+# Searches the marketplace install path (stable across versions).
+_find_multiagent_script() {
+  local name="$1" match
+  for match in ~/.claude/plugins/marketplaces/*/plugins/claude-multiagent/scripts/"$name"; do
+    [[ -x "$match" ]] && echo "$match" && return 0
+  done
+  return 1
+}
+
+# Open dashboard panes (if available) then launch claude.
+# Pane script is idempotent — safe to call on every launch.
+_claude_launch() {
+  local _ds
+  _ds="$(_find_multiagent_script "open-dashboard.sh" 2>/dev/null)" || true
+  if [[ -n "$_ds" ]]; then
+    "$_ds" "$PWD" &>/dev/null &
+    disown 2>/dev/null
+  fi
+  command claude "$@"
+}
+
 # claude() — Worktree-first shell function for Claude Code.
 #
 # Prevents Claude Code sessions from accidentally working on the default branch
@@ -320,7 +342,7 @@ claude() {
   done
 
   if [ "$_skip_worktree" -eq 1 ]; then
-    command claude "${_claude_args[@]}"
+    _claude_launch "${_claude_args[@]}"
     return $?
   fi
 
@@ -346,7 +368,7 @@ claude() {
   abs_git_common="$(cd "$git_common_dir" && pwd)"
 
   if [ "$abs_git_dir" != "$abs_git_common" ]; then
-    command claude "$@"
+    _claude_launch "$@"
     return $?
   fi
 
@@ -371,7 +393,7 @@ claude() {
   current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo "")"
 
   if [ "$current_branch" != "$default_branch" ]; then
-    command claude "$@"
+    _claude_launch "$@"
     return $?
   fi
 
@@ -404,5 +426,5 @@ claude() {
     return 1
   fi
 
-  command claude "$@"
+  _claude_launch "$@"
 }
