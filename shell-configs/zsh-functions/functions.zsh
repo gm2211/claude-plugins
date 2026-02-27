@@ -453,25 +453,9 @@ wt() {
   esac
 }
 
-# Locate a script inside the claude-multiagent plugin directory.
-# Searches the marketplace install path (stable across versions).
-_find_multiagent_script() {
-  local name="$1" match
-  for match in ~/.claude/plugins/marketplaces/*/plugins/claude-multiagent/scripts/"$name"; do
-    [[ -x "$match" ]] && echo "$match" && return 0
-  done
-  return 1
-}
-
-# Open dashboard panes (if available) then launch claude.
-# Pane script is idempotent — safe to call on every launch.
+# Launch Claude. Dashboard panes are opened by the SessionStart hook so
+# dependency bootstrap runs first and panes are not opened twice.
 _claude_launch() {
-  local _ds
-  _ds="$(_find_multiagent_script "open-dashboard.sh" 2>/dev/null)" || true
-  if [[ -n "$_ds" ]]; then
-    "$_ds" "$PWD" &>/dev/null &
-    disown 2>/dev/null
-  fi
   command claude "$@"
 }
 
