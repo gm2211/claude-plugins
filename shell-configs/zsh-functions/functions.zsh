@@ -9,7 +9,7 @@ function ss() {
     }
 }
 
-# wt() — Interactive worktree selector (wt) and creator (wt new).
+# wt() — Interactive worktree selector/creator/remover.
 #
 # Works from any git repo. Dispatches on the first argument:
 #
@@ -18,13 +18,18 @@ function ss() {
 #   wt new     — creator: offers a date-based session name (session-YYYY-MM-DD)
 #                with -N suffix for duplicates. Also accepts custom names.
 #                Creates the worktree with `git worktree add` and cd's into it.
+#   wt delete  — remover: interactively selects a session worktree and removes
+#                it using `git worktree remove` after confirmation.
+#                Optional forms: `wt delete <name>`, `wt delete --force`.
 #   wt <other> — usage error.
 #
 # Common behavior (runs before dispatch):
 #   - Not inside a git repository → error, return 1
 #   - Already inside a git worktree → print which worktree, return 0
+#     (except for explicit delete subcommands)
 #   - On a non-default branch → print which branch, return 0
-#   - On the default branch (main/master): dispatch to subcommand
+#     (except for explicit delete subcommands)
+#   - Otherwise dispatch to subcommand
 #
 # Compatible with bash and zsh.
 
@@ -38,6 +43,10 @@ wt() {
   _wt_err()  { printf 'ERROR: %s\n' "$*" >&2; }
 
   local subcmd="${1:-}"
+  local is_delete_cmd=0
+  case "$subcmd" in
+    delete|rm|remove) is_delete_cmd=1 ;;
+  esac
 
   # Clean up on Ctrl+C
   trap '_wt_msg ""; _wt_msg "Interrupted."; return 130' INT
@@ -64,7 +73,7 @@ wt() {
   abs_git_dir="$(cd "$git_dir" && pwd)"
   abs_git_common="$(cd "$git_common_dir" && pwd)"
 
-  if [ "$abs_git_dir" != "$abs_git_common" ]; then
+  if [ "$abs_git_dir" != "$abs_git_common" ] && [ "$is_delete_cmd" -eq 0 ]; then
     local wt_branch
     wt_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached)")"
     _wt_msg "Already in a worktree: $wt_branch ($(pwd))"
@@ -92,18 +101,18 @@ wt() {
 
   current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo "")"
 
-  if [ "$current_branch" != "$default_branch" ]; then
+  if [ "$current_branch" != "$default_branch" ] && [ "$is_delete_cmd" -eq 0 ]; then
     _wt_msg "On branch '$current_branch' (not the default branch)."
     trap - INT
     return 0
   fi
 
   #############################################################################
-  # Case 4: On default branch — dispatch on subcommand
+  # Case 4: Dispatch on subcommand
   #############################################################################
 
   local repo_root worktrees_dir
-  repo_root="$(git rev-parse --show-toplevel)"
+  repo_root="$(cd "$abs_git_common/.." && pwd)"
   worktrees_dir="$repo_root/.worktrees"
   mkdir -p "$worktrees_dir"
 
@@ -272,12 +281,189 @@ wt() {
       ;;
 
     ###########################################################################
+    # wt delete / rm / remove — remover
+    ###########################################################################
+
+    delete|rm|remove)
+      local del_force=0
+      local del_name=""
+      local arg
+
+      shift
+      for arg in "$@"; do
+        case "$arg" in
+          -f|--force) del_force=1 ;;
+          *)
+            if [ -z "$del_name" ]; then
+              del_name="$arg"
+            else
+              _wt_err "Too many arguments for delete."
+              _wt_msg "Usage: wt delete [name] [--force]"
+              trap - INT
+              return 1
+            fi
+            ;;
+        esac
+      done
+
+      # Collect existing session worktrees (directories without -- in their name)
+      local session_worktrees=()
+      if [ -d "$worktrees_dir" ]; then
+        local wt_dir wt_name
+        [ -n "$ZSH_VERSION" ] && setopt local_options NULL_GLOB
+        for wt_dir in "$worktrees_dir"/*/; do
+          [ -d "$wt_dir" ] || continue
+          wt_name="$(basename "$wt_dir")"
+          case "$wt_name" in *--*) continue ;; esac
+          session_worktrees+=("$wt_name")
+        done
+      fi
+
+      if [ ${#session_worktrees[@]} -eq 0 ]; then
+        _wt_msg "No worktrees found to delete."
+        trap - INT
+        return 1
+      fi
+
+      local choice=""
+      if [ -n "$del_name" ]; then
+        local found=0
+        local _wt
+        for _wt in "${session_worktrees[@]}"; do
+          if [ "$_wt" = "$del_name" ]; then
+            found=1
+            break
+          fi
+        done
+        if [ "$found" -eq 0 ]; then
+          _wt_err "Worktree '$del_name' was not found."
+          _wt_msg "Available worktrees:"
+          local _i=0
+          for _wt in "${session_worktrees[@]}"; do
+            _i=$((_i + 1))
+            _wt_msg "  ${_i}) ${_wt}"
+          done
+          trap - INT
+          return 1
+        fi
+        choice="$del_name"
+      else
+        # Detect whether a TTY is available for interactive prompts
+        local _tty_available=0
+        if [ -t 0 ] || { [ -e /dev/tty ] && : </dev/tty 2>/dev/null; }; then
+          _tty_available=1
+        fi
+
+        if [ "$_tty_available" -eq 1 ] && command -v fzf >/dev/null 2>&1; then
+          local selected
+          selected=$(printf '%s\n' "${session_worktrees[@]}" | fzf --height=~50% --reverse --prompt="Delete worktree: " --header="Arrow keys to navigate, Enter to select, Esc to cancel" 2>/dev/null)
+          local fzf_exit=$?
+          if [ $fzf_exit -ne 0 ] || [ -z "$selected" ]; then
+            _wt_msg "No worktree selected."
+            trap - INT
+            return 1
+          fi
+          choice="$selected"
+        elif [ "$_tty_available" -eq 1 ]; then
+          _wt_msg "Existing worktrees:"
+          local _i=0
+          local _wt
+          for _wt in "${session_worktrees[@]}"; do
+            _i=$((_i + 1))
+            _wt_msg "  ${_i}) ${_wt}"
+          done
+          _wt_msg ""
+
+          local selection
+          printf "Select a worktree to delete [1-${#session_worktrees[@]}]: " >&2
+          read -r selection </dev/tty
+
+          if echo "$selection" | grep -qE '^[0-9]+$' && [ "$selection" -ge 1 ] && [ "$selection" -le ${#session_worktrees[@]} ]; then
+            _i=0
+            for _wt in "${session_worktrees[@]}"; do
+              _i=$((_i + 1))
+              if [ "$_i" -eq "$selection" ]; then
+                choice="$_wt"
+                break
+              fi
+            done
+          else
+            _wt_err "Invalid selection: $selection"
+            trap - INT
+            return 1
+          fi
+        else
+          _wt_err "No TTY available for interactive deletion. Use: wt delete <name> [--force]"
+          trap - INT
+          return 1
+        fi
+      fi
+
+      local target_dir="$worktrees_dir/$choice"
+      if [ ! -d "$target_dir" ]; then
+        _wt_err "Worktree directory does not exist: $target_dir"
+        trap - INT
+        return 1
+      fi
+
+      local target_abs pwd_abs
+      target_abs="$(cd "$target_dir" && pwd -P)"
+      pwd_abs="$(pwd -P)"
+      case "$pwd_abs/" in
+        "$target_abs"/*)
+          _wt_err "Cannot delete the current worktree from inside it. Switch directories and retry."
+          trap - INT
+          return 1
+          ;;
+      esac
+
+      # Confirm deletion unless --force is provided
+      if [ "$del_force" -eq 0 ]; then
+        local _tty_available=0
+        if [ -t 0 ] || { [ -e /dev/tty ] && : </dev/tty 2>/dev/null; }; then
+          _tty_available=1
+        fi
+
+        if [ "$_tty_available" -eq 1 ]; then
+          local confirm
+          printf "Delete worktree '%s'? [y/N]: " "$choice" >&2
+          read -r confirm </dev/tty
+          case "$confirm" in
+            y|Y|yes|YES|Yes) ;;
+            *)
+              _wt_msg "Deletion cancelled."
+              trap - INT
+              return 1
+              ;;
+          esac
+        else
+          _wt_err "No TTY available for confirmation. Re-run with --force."
+          trap - INT
+          return 1
+        fi
+      fi
+
+      local remove_args=()
+      [ "$del_force" -eq 1 ] && remove_args+=(--force)
+
+      git worktree remove "${remove_args[@]}" "$target_dir" || {
+        _wt_err "Failed to remove worktree '$choice'. Use --force if there are uncommitted changes."
+        trap - INT
+        return 1
+      }
+
+      git worktree prune >/dev/null 2>&1
+      _wt_msg "Removed worktree: $choice"
+      trap - INT
+      ;;
+
+    ###########################################################################
     # wt <unknown> — usage error
     ###########################################################################
 
     *)
       _wt_err "Unknown subcommand: $subcmd"
-      _wt_msg "Usage: wt [new]"
+      _wt_msg "Usage: wt [new|delete [name] [--force]]"
       trap - INT
       return 1
       ;;

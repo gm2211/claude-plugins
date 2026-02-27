@@ -4,7 +4,7 @@ This repo / marketplaces will contain plugins I develop as I'm trying to hone my
 | :warning: WARNING           |
 |:----------------------------|
 | Maybe they work for you too, maybe they won't. |
-| Maybe they'll make cladue hallucinate and wipe your computer 🤷 |
+| Maybe they'll make claude hallucinate and wipe your computer 🤷 |
 | Install at your own risk. |
 
 # 1. claude-multiagent
