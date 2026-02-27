@@ -24,8 +24,16 @@ fi
 # Returns the name of the focused tab (the one the user is currently looking at)
 # by finding the tab line that has "focus=true" in the dump-layout output.
 # Uses portable POSIX awk (no gawk extensions) — compatible with BSD awk on macOS.
+# Optional $1: pre-fetched layout text; if omitted, calls dump-layout itself.
 get_focused_tab_name() {
-    zellij action dump-layout 2>/dev/null \
+    local layout_text
+    if [ -n "${1:-}" ]; then
+        layout_text="$1"
+    else
+        layout_text="$(zellij action dump-layout 2>/dev/null)"
+    fi
+
+    printf '%s\n' "$layout_text" \
         | awk '
             /tab name=/ {
                 line = $0
@@ -44,12 +52,21 @@ get_focused_tab_name() {
 # see a pane with a matching cwd, we emit the current tab name.
 # Handles both absolute cwd (/Users/foo/project) and relative cwd (project).
 # Uses portable POSIX awk (no gawk extensions) — compatible with BSD awk on macOS.
+# $1: target cwd path (required)
+# Optional $2: pre-fetched layout text; if omitted, calls dump-layout itself.
 get_tab_name_for_cwd() {
     local target_cwd="$1"
     local basename_cwd
     basename_cwd="$(basename "$target_cwd")"
 
-    zellij action dump-layout 2>/dev/null \
+    local layout_text
+    if [ -n "${2:-}" ]; then
+        layout_text="$2"
+    else
+        layout_text="$(zellij action dump-layout 2>/dev/null)"
+    fi
+
+    printf '%s\n' "$layout_text" \
         | awk -v target="$target_cwd" -v base="$basename_cwd" '
             /tab name=/ {
                 line = $0
@@ -94,9 +111,13 @@ NOTIFICATION_PREFIX="● "
 do_tab_rename() {
     local mode="$1"   # "add" or "remove"
 
+    # Fetch layout once and reuse for both helper calls, avoiding two 1-3s calls
+    local layout
+    layout="$(zellij action dump-layout 2>/dev/null)"
+
     # Find the tab that contains this Claude session (by its working directory)
     local our_tab_name
-    our_tab_name="$(get_tab_name_for_cwd "${PWD}")"
+    our_tab_name="$(get_tab_name_for_cwd "${PWD}" "$layout")"
 
     if [ -z "$our_tab_name" ]; then
         # Cannot determine our tab — skip tab rename, only do global pipe
@@ -106,7 +127,7 @@ do_tab_rename() {
     # Find which tab is currently focused (used both for the focused-tab guard and
     # to restore focus after renaming)
     local focused_tab
-    focused_tab="$(get_focused_tab_name)"
+    focused_tab="$(get_focused_tab_name "$layout")"
 
     # Compute the new tab name
     local new_name
