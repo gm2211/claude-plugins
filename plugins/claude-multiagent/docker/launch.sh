@@ -205,16 +205,75 @@ attach_to_container() {
     exec docker exec -it "$cid" /bin/zsh -l
 }
 
+_tty_available() {
+    [ -t 0 ] || { [ -e /dev/tty ] && : </dev/tty 2>/dev/null; }
+}
+
+# Build fzf display lines from the current CONTAINER_IDS arrays.
+# Each line: "NAME  REPO  STATUS"
+_container_fzf_lines() {
+    local i=0
+    while [ "$i" -lt "${#CONTAINER_IDS[@]}" ]; do
+        local cid="${CONTAINER_IDS[$i]}"
+        local repo name status
+        repo=$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^REPO=' | cut -d= -f2-)
+        name=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | sed 's|^/||')
+        status=$(docker ps -a --filter "id=$cid" --format '{{.Status}}' 2>/dev/null)
+        printf "%-20s  %-30s  %s\n" "${name:-$cid}" "${repo:-unknown}" "${status:-unknown}"
+        ((i++))
+    done
+}
+
+# Given a fzf-selected line, return the 0-based index of the matching container.
+_container_index_from_line() {
+    local selected="$1"
+    local selected_name
+    selected_name=$(printf '%s' "$selected" | awk '{print $1}')
+    local i=0
+    while [ "$i" -lt "${#CONTAINER_IDS[@]}" ]; do
+        local cid="${CONTAINER_IDS[$i]}"
+        local name
+        name=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | sed 's|^/||')
+        if [ "${name:-$cid}" = "$selected_name" ]; then
+            echo "$i"
+            return 0
+        fi
+        ((i++))
+    done
+    return 1
+}
+
 check_existing_containers() {
     if [ "$ATTACH_MODE" = "true" ]; then
         if list_containers; then
             echo ""
-            printf "  Enter container number to attach: "
-            read -r choice
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#CONTAINER_IDS[@]}" ]; then
-                attach_to_container "${CONTAINER_IDS[$((choice-1))]}"
+            local choice=""
+            if _tty_available && command -v fzf >/dev/null 2>&1; then
+                # fzf mode
+                local selected
+                selected=$(_container_fzf_lines | fzf --height=~50% --reverse \
+                    --prompt="Select container to attach: " \
+                    --header="Arrow keys to navigate, Enter to select, Esc to cancel" \
+                    2>/dev/null </dev/tty)
+                local fzf_exit=$?
+                if [ "$fzf_exit" -ne 0 ] || [ -z "$selected" ]; then
+                    die "No container selected."
+                fi
+                local idx
+                idx=$(_container_index_from_line "$selected") || die "Could not resolve selected container."
+                attach_to_container "${CONTAINER_IDS[$idx]}"
+            elif _tty_available; then
+                # Numbered list fallback
+                printf "  Enter container number to attach: "
+                read -r choice </dev/tty
+                if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#CONTAINER_IDS[@]}" ]; then
+                    attach_to_container "${CONTAINER_IDS[$((choice-1))]}"
+                else
+                    die "Invalid selection: $choice"
+                fi
             else
-                die "Invalid selection: $choice"
+                error "No TTY available for interactive selection."
+                die "Run launch.sh --attach in an interactive terminal."
             fi
         else
             die "No containers found. Launch a new one without --attach."
@@ -224,10 +283,31 @@ check_existing_containers() {
     # Non-attach mode: if containers exist, offer to attach or start new
     if list_containers 2>/dev/null; then
         echo ""
-        printf "  Attach to existing (enter number) or start new (n): "
-        read -r choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#CONTAINER_IDS[@]}" ]; then
-            attach_to_container "${CONTAINER_IDS[$((choice-1))]}"
+        if _tty_available && command -v fzf >/dev/null 2>&1; then
+            # fzf mode — Esc means start new
+            local selected
+            selected=$(_container_fzf_lines | fzf --height=~50% --reverse \
+                --prompt="Attach to existing or Esc for new: " \
+                --header="Arrow keys to navigate, Enter to select, Esc to start new" \
+                2>/dev/null </dev/tty)
+            local fzf_exit=$?
+            if [ "$fzf_exit" -eq 0 ] && [ -n "$selected" ]; then
+                local idx
+                idx=$(_container_index_from_line "$selected") || die "Could not resolve selected container."
+                attach_to_container "${CONTAINER_IDS[$idx]}"
+            fi
+            # Esc or empty → fall through to start a new container
+        elif _tty_available; then
+            # Numbered list fallback
+            local choice=""
+            printf "  Attach to existing (enter number) or start new (n): "
+            read -r choice </dev/tty
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#CONTAINER_IDS[@]}" ]; then
+                attach_to_container "${CONTAINER_IDS[$((choice-1))]}"
+            fi
+        else
+            # No TTY — list containers and fall through to start new
+            warn "No TTY available; skipping container selection. Starting a new container."
         fi
         echo ""
     fi
@@ -251,27 +331,56 @@ select_repo() {
     repos=$(gh repo list --limit 15 --json nameWithOwner -q '.[].nameWithOwner' 2>/dev/null || true)
 
     if [ -n "$repos" ]; then
-        local i=1
         local repo_array=()
         while IFS= read -r repo; do
             repo_array+=("$repo")
-            printf "  %2d) %s\n" "$i" "$repo"
-            ((i++))
         done <<< "$repos"
-        echo ""
-        printf "  Enter number, or type owner/repo: "
-        read -r selection
 
-        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#repo_array[@]}" ]; then
-            REPO="${repo_array[$((selection-1))]}"
-        elif [[ "$selection" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
-            REPO="$selection"
+        if _tty_available && command -v fzf >/dev/null 2>&1; then
+            # fzf mode
+            local selected
+            selected=$(printf '%s\n' "${repo_array[@]}" | fzf --height=~50% --reverse \
+                --prompt="Select repo: " \
+                --header="Arrow keys to navigate, Enter to select, Esc to type manually" \
+                2>/dev/null </dev/tty)
+            local fzf_exit=$?
+            if [ "$fzf_exit" -eq 0 ] && [ -n "$selected" ]; then
+                REPO="$selected"
+            else
+                # Esc pressed — let user type manually
+                printf "  Enter repository (owner/repo): "
+                read -r REPO </dev/tty
+            fi
+        elif _tty_available; then
+            # Numbered list fallback
+            local i=1
+            for repo in "${repo_array[@]}"; do
+                printf "  %2d) %s\n" "$i" "$repo"
+                ((i++))
+            done
+            echo ""
+            printf "  Enter number, or type owner/repo: "
+            read -r selection </dev/tty
+
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#repo_array[@]}" ]; then
+                REPO="${repo_array[$((selection-1))]}"
+            elif [[ "$selection" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+                REPO="$selection"
+            else
+                die "Invalid selection: $selection"
+            fi
         else
-            die "Invalid selection: $selection"
+            # No TTY — cannot interactively select
+            error "No TTY available for interactive repo selection."
+            die "Pass a repo directly: launch.sh owner/repo"
         fi
     else
-        printf "  Enter repository (owner/repo): "
-        read -r REPO
+        if _tty_available; then
+            printf "  Enter repository (owner/repo): "
+            read -r REPO </dev/tty
+        else
+            die "No repos found and no TTY available. Pass a repo directly: launch.sh owner/repo"
+        fi
     fi
 
     if [ -z "$REPO" ]; then
