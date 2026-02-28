@@ -183,10 +183,12 @@ has_dashboard_pane() {
   local script_name="$3"  # e.g. "watch-beads.py"
   local project_dir="$4"  # e.g. "/Users/me/my-project" (used to scope script-name fallback)
   while IFS= read -r line; do
-    # Match by pane name attribute: name="dashboard-beads"
+    # Match by pane name (supports multiple dump-layout formats).
     # Named panes include a DASH_ID suffix (e.g. dashboard-beads-abc12345) and
     # are already scoped to the focused tab, so no project-dir check needed.
-    if [[ "$line" == *"name=\"${pane_name}"* ]]; then
+    # We intentionally match on "<pane_name>-" anywhere in the line because
+    # zellij output formats vary across versions (name="...", name=..., name "...").
+    if [[ "$line" == *"${pane_name}-"* ]]; then
       echo 1
       return
     fi

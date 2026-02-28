@@ -103,7 +103,8 @@ extract_dashboard_id_from_layout() {
   local layout="$1"
   local id=""
   while IFS= read -r line; do
-    if [[ "$line" =~ name=\"dashboard-(beads|deploys|watch)-([a-f0-9]+)\" ]]; then
+    # Match dashboard IDs regardless of dump-layout quoting/attribute style.
+    if [[ "$line" =~ dashboard-(beads|deploys|watch)-([a-f0-9]+) ]]; then
       id="${BASH_REMATCH[2]}"
       break
     fi
@@ -118,7 +119,7 @@ extract_project_dashboard_id() {
 
   # Collect all dashboard IDs from the layout
   while IFS= read -r line; do
-    if [[ "$line" =~ name=\"dashboard-(beads|deploys|watch)-([a-f0-9]+)\" ]]; then
+    if [[ "$line" =~ dashboard-(beads|deploys|watch)-([a-f0-9]+) ]]; then
       local candidate="${BASH_REMATCH[2]}"
       # Check if this ID is already in our list
       local found=false
