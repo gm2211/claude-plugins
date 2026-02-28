@@ -28,6 +28,7 @@ Also extract any optional flags the user requested:
 - `--budget <usd>` — set max API spend
 - `--rebuild` — force rebuild the Docker image
 - `--no-push` — autonomous mode (commits stay local, no git push)
+- `--persistent` — reuse a per-repo Docker volume instead of fresh clone
 
 ### 2. Ask the user for missing required information (before running anything)
 
@@ -121,6 +122,7 @@ LAUNCH_FLAGS=""
 [ -n "$MAX_BUDGET_USD" ]  && LAUNCH_FLAGS="$LAUNCH_FLAGS --budget $MAX_BUDGET_USD"
 [ "$FORCE_REBUILD" = "true" ] && LAUNCH_FLAGS="$LAUNCH_FLAGS --rebuild"
 [ "$NO_PUSH" = "true" ]   && LAUNCH_FLAGS="$LAUNCH_FLAGS --no-push"
+[ "$PERSIST_REPO" = "true" ] && LAUNCH_FLAGS="$LAUNCH_FLAGS --persistent"
 
 # Use the user-supplied prompt, or the sentinel "ready" for non-interactive startup
 PROMPT_VALUE="${CLAUDE_PROMPT:-ready}"

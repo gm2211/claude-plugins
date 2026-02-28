@@ -9,6 +9,7 @@ trap 'log_error "Command failed at line $LINENO: $BASH_COMMAND"; exit 1' ERR
 # ---------------------------------------------------------------------------
 log_info()    { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
 log_success() { printf '\033[1;32m[OK]\033[0m   %s\n' "$*"; }
+log_warn()    { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
 log_error()   { printf '\033[1;31m[ERR]\033[0m  %s\n' "$*" >&2; }
 die()         { log_error "$@"; exit 1; }
 
@@ -27,6 +28,11 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     log_info "No ANTHROPIC_API_KEY set — run 'claude login' inside the container to authenticate"
 fi
 
+REPO_DIR="/home/claude/repo"
+REPO_URL="https://github.com/${REPO}.git"
+READY_SENTINEL="/tmp/claude-ready"
+rm -f "$READY_SENTINEL"
+
 # ---------------------------------------------------------------------------
 # 2. Configure git identity & credentials
 # ---------------------------------------------------------------------------
@@ -41,20 +47,92 @@ log_info "Git identity: $(git config --global user.name) <$(git config --global 
 log_success "Git credentials configured via GH_TOKEN"
 
 # ---------------------------------------------------------------------------
-# 3. Clone repository
+# 3. Prepare repository checkout
 # ---------------------------------------------------------------------------
-log_info "Cloning $REPO..."
-# Clone without embedding GH_TOKEN in remote URL. Auth is provided by
-# credential.helper configured above.
-git clone --depth=50 "https://github.com/${REPO}.git" /home/claude/repo
-cd /home/claude/repo
+normalize_remote_url() {
+    printf '%s' "$1" | sed -E \
+        -e 's#^git@github.com:#https://github.com/#' \
+        -e 's#^https://x-access-token:[^@]+@github.com/#https://github.com/#' \
+        -e 's#\.git$##'
+}
 
-if [ -n "${REPO_BRANCH:-}" ]; then
-    git checkout "$REPO_BRANCH"
+repo_has_uncommitted_changes() {
+    [ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]
+}
+
+ensure_origin_remote() {
+    local current_origin current_norm target_norm
+    current_origin="$(git remote get-url origin 2>/dev/null || true)"
+    target_norm="$(normalize_remote_url "$REPO_URL")"
+
+    if [ -z "$current_origin" ]; then
+        git remote add origin "$REPO_URL"
+        log_info "Added missing origin remote: $REPO_URL"
+        return 0
+    fi
+
+    current_norm="$(normalize_remote_url "$current_origin")"
+    if [ "$current_norm" != "$target_norm" ]; then
+        git remote set-url origin "$REPO_URL"
+        log_warn "Origin remote differed ($current_origin); reset to $REPO_URL"
+    fi
+}
+
+checkout_requested_branch() {
+    local branch="$1"
+    [ -z "$branch" ] && return 0
+
+    local current_branch
+    current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo "detached")"
+    if [ "$current_branch" = "$branch" ]; then
+        return 0
+    fi
+
+    if repo_has_uncommitted_changes; then
+        log_warn "Working tree has local changes; keeping branch $current_branch (requested: $branch)"
+        return 0
+    fi
+
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+        git checkout "$branch"
+    elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        git checkout -b "$branch" --track "origin/$branch"
+    else
+        git checkout -b "$branch"
+    fi
+}
+
+if [ "${PERSIST_REPO:-false}" = "true" ] && [ -d "$REPO_DIR/.git" ]; then
+    log_info "Persistent mode enabled — reusing existing checkout at $REPO_DIR"
+    cd "$REPO_DIR"
+    ensure_origin_remote
+    if git fetch --prune origin; then
+        log_info "Fetched latest refs from origin"
+    else
+        log_warn "Failed to fetch origin; continuing with existing local state"
+    fi
+    checkout_requested_branch "${REPO_BRANCH:-}"
+else
+    if [ -e "$REPO_DIR" ] && [ ! -d "$REPO_DIR/.git" ]; then
+        if [ -n "$(ls -A "$REPO_DIR" 2>/dev/null)" ]; then
+            log_warn "Repository directory exists but is not a git checkout; resetting $REPO_DIR"
+        fi
+        rm -rf "$REPO_DIR"
+    fi
+
+    log_info "Cloning $REPO..."
+    # Clone without embedding GH_TOKEN in remote URL. Auth is provided by
+    # credential.helper configured above.
+    git clone --depth=50 "$REPO_URL" "$REPO_DIR"
+    cd "$REPO_DIR"
+
+    if [ -n "${REPO_BRANCH:-}" ]; then
+        git checkout "$REPO_BRANCH"
+    fi
 fi
 
 CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --short HEAD)"
-log_success "Cloned $REPO (branch: $CURRENT_BRANCH)"
+log_success "Repository ready: $REPO (branch: $CURRENT_BRANCH)"
 
 # ---------------------------------------------------------------------------
 # 3a. No-push mode — block git push at the hook level
@@ -152,7 +230,8 @@ log_info "Claude project settings written"
 # ---------------------------------------------------------------------------
 if [ "${NO_PUSH:-}" = "true" ]; then
     mkdir -p /home/claude/repo/.claude
-    cat >> /home/claude/repo/.claude/CLAUDE.md << 'NOPUSH'
+    if ! grep -Fq "## Autonomous No-Push Mode" /home/claude/repo/.claude/CLAUDE.md 2>/dev/null; then
+        cat >> /home/claude/repo/.claude/CLAUDE.md << 'NOPUSH'
 
 ## Autonomous No-Push Mode
 
@@ -177,7 +256,10 @@ The normal "git push" step in the session close protocol is SKIPPED in no-push m
 Instead: commit all changes, verify all beads are closed, output the summary above.
 NOPUSH
 
-    log_info "No-push autonomous mode instructions written to CLAUDE.md"
+        log_info "No-push autonomous mode instructions written to CLAUDE.md"
+    else
+        log_info "No-push autonomous mode instructions already present in CLAUDE.md"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -204,6 +286,7 @@ chmod +x /home/claude/.local/bin/cc
 # ---------------------------------------------------------------------------
 # Non-interactive mode (CLAUDE_PROMPT is set) — run and exit
 # ---------------------------------------------------------------------------
+touch "$READY_SENTINEL"
 if [ -n "${CLAUDE_PROMPT:-}" ]; then
     log_info "Running non-interactive: $CLAUDE_PROMPT"
     cd /home/claude/repo

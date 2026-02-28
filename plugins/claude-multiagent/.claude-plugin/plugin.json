@@ -1,5 +1,5 @@
 {
-  "version": "1.51.17",
+  "version": "1.51.18",
   "name": "claude-multiagent",
   "description": "Turns Claude Code into an async coordinator that delegates work to background sub-agents in git worktrees",
   "author": {

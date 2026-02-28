@@ -14,6 +14,9 @@ Includes full dev environment: Zellij terminal multiplexer, Neovim with AstroNvi
 # Specify a repo directly
 ./plugins/claude-multiagent/docker/launch.sh owner/repo
 
+# Reuse a persistent per-repo volume (resume previous local state)
+./plugins/claude-multiagent/docker/launch.sh --persistent owner/repo
+
 # Non-interactive (for CI/automation)
 ./plugins/claude-multiagent/docker/launch.sh --prompt "fix the failing tests" owner/repo
 ```
@@ -56,6 +59,7 @@ it as `GH_TOKEN` (no `gh` binary/login required):
 | `REPO_BRANCH` | No | default branch | Branch to checkout after cloning |
 | `CLAUDE_MODEL` | No | — | Model override (haiku/sonnet/opus) |
 | `CLAUDE_PROMPT` | No | — | Non-interactive mode prompt |
+| `PERSIST_REPO` | No | `false` | Reuse existing `/home/claude/repo` checkout (set by `launch.sh --persistent`) |
 | `GIT_USER_NAME` | No | Claude Agent | Git commit author name |
 | `GIT_USER_EMAIL` | No | claude@agent.local | Git commit author email |
 | `MAX_BUDGET_USD` | No | — | Maximum API spend limit in USD |
@@ -85,6 +89,15 @@ docker compose -f plugins/claude-multiagent/docker/docker-compose.yml up
 ### Custom Branch and Model
 ```bash
 ./plugins/claude-multiagent/docker/launch.sh --branch feature-x --model opus owner/repo
+```
+
+### Persistent Repo Mode
+```bash
+# Keeps repo state in a named Docker volume: claude-repo-<owner>-<repo>
+./plugins/claude-multiagent/docker/launch.sh --persistent owner/repo
+
+# Remove the persisted repo volume when you want a clean slate
+docker volume rm claude-repo-owner-repo
 ```
 
 ### Force Rebuild
@@ -119,7 +132,8 @@ From within Claude Code:
 - **`--dangerously-skip-permissions`**: Safe because the container IS the sandbox
 - **Scoped GitHub access**: Token from device flow inherits your permissions; fine-grained PATs limit to one repo
 - **No baked secrets**: All credentials passed via environment variables at runtime
-- **Ephemeral**: Fresh git clone each run, no state persists between containers
+- **Default ephemeral**: Fresh git clone each run unless you opt into `--persistent`
+- **Optional persistent mode**: Stores repo state in a per-repo Docker volume (`claude-repo-<owner>-<repo>`)
 - **Resource limits**: 4GB RAM, 2 CPUs (configurable in docker-compose.yml or launch.sh)
 
 ## Building Manually

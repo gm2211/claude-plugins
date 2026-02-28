@@ -30,6 +30,7 @@ MAX_BUDGET_USD=""
 ATTACH_MODE="false"
 NO_PUSH="false"
 GH_AVAILABLE="false"
+PERSIST_REPO="false"
 
 usage() {
     cat <<'USAGE'
@@ -41,6 +42,7 @@ Options:
   --rebuild     Force rebuild the Docker image
   --attach      List running containers and attach to one
   --no-push     Autonomous mode: commits local only, no git push
+  --persistent  Reuse a per-repo Docker volume instead of fresh clone
   --prompt CMD  Run non-interactively with this prompt
   --branch BR   Checkout this branch
   --model MOD   Use this Claude model
@@ -68,6 +70,10 @@ parse_args() {
                 ;;
             --no-push)
                 NO_PUSH="true"
+                shift
+                ;;
+            --persistent)
+                PERSIST_REPO="true"
                 shift
                 ;;
             --prompt=*)
@@ -224,6 +230,12 @@ attach_to_container() {
 
 _tty_available() {
     [ -t 0 ] || { [ -e /dev/tty ] && : </dev/tty 2>/dev/null; }
+}
+
+repo_volume_name() {
+    local slug
+    slug=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9_.-]#-#g')
+    printf 'claude-repo-%s' "$slug"
 }
 
 # Build fzf display lines from the current CONTAINER_IDS arrays.
@@ -452,7 +464,11 @@ build_image() {
 launch_container() {
     # Generate a container name from the repo
     local container_name
+    local repo_volume=""
     container_name="claude-$(echo "$REPO" | tr '/' '-' | tr '.' '-')"
+    if [ "$PERSIST_REPO" = "true" ]; then
+        repo_volume="$(repo_volume_name)"
+    fi
 
     # Remove stopped container with same name if it exists
     docker rm "$container_name" 2>/dev/null || true
@@ -478,6 +494,10 @@ launch_container() {
     fi
 
     [ "$NO_PUSH" = "true" ] && docker_args+=("-e" "NO_PUSH=true")
+    if [ "$PERSIST_REPO" = "true" ]; then
+        docker_args+=("-e" "PERSIST_REPO=true")
+        docker_args+=("-v" "${repo_volume}:/home/claude/repo")
+    fi
 
     docker_args+=("$IMAGE_NAME")
 
@@ -491,6 +511,7 @@ launch_container() {
     [ -n "${CLAUDE_MODEL:-}" ] && info "  Model:  $CLAUDE_MODEL"
     [ -n "${CLAUDE_PROMPT:-}" ] && info "  Prompt: $CLAUDE_PROMPT"
     [ "$NO_PUSH" = "true" ] && info "  Mode:   NO PUSH (autonomous, commits local only)"
+    [ "$PERSIST_REPO" = "true" ] && info "  Mode:   PERSISTENT repo volume (${repo_volume})"
     info "════════════════════════════════════════"
     echo ""
 
@@ -512,8 +533,8 @@ launch_container() {
             exit 1
         fi
 
-        # Check if setup is done (sleep infinity is running = repo cloned, ready)
-        if docker exec "$cid" test -d /home/claude/repo 2>/dev/null; then
+        # Check if setup is done (entrypoint writes readiness sentinel)
+        if docker exec "$cid" test -f /tmp/claude-ready 2>/dev/null; then
             break
         fi
 
