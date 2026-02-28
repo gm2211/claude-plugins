@@ -280,11 +280,20 @@ class DeploysTab(Vertical):
         def _on_pick(provider: str | None) -> None:
             if provider is None:
                 return
-            self._configure_provider_fields(provider)
+            cfg = config_read(self._config_file)
+            existing = cfg.get(provider, {})
+            self._configure_provider_fields(
+                provider,
+                initial_values=existing if isinstance(existing, dict) else {},
+            )
 
         self.app.push_screen(ProviderPicker(self._providers_dir), callback=_on_pick)
 
-    def _configure_provider_fields(self, provider: str) -> None:
+    def _configure_provider_fields(
+        self,
+        provider: str,
+        initial_values: dict[str, str] | None = None,
+    ) -> None:
         """Show config fields modal for the selected provider."""
         from ..modals.provider_config import ProviderConfigModal
 
@@ -300,7 +309,11 @@ class DeploysTab(Vertical):
             self._refresh_data()
 
         self.app.push_screen(
-            ProviderConfigModal(provider, self._providers_dir),
+            ProviderConfigModal(
+                provider,
+                self._providers_dir,
+                initial_values=initial_values,
+            ),
             callback=_on_config,
         )
 
@@ -314,9 +327,16 @@ class DeploysTab(Vertical):
         from ..modals.provider_manage import ProviderManageModal
 
         name = provider_display_name(provider, self._providers_dir)
+        current_cfg = config_read(self._config_file)
+        existing_vals = current_cfg.get(provider, {})
 
         def _on_manage(action: str | None) -> None:
-            if action == "change":
+            if action == "configure":
+                self._configure_provider_fields(
+                    provider,
+                    initial_values=existing_vals if isinstance(existing_vals, dict) else {},
+                )
+            elif action == "change":
                 self.configure_provider()
             elif action == "remove":
                 config_remove(self._config_file)

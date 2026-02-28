@@ -106,13 +106,18 @@ cmd_list() {
             end
         ),
         environment: (
-            if (.event == "release") then "prod"
-            elif (.headBranch | test("^v[0-9]")) then "prod"
-            elif (.headBranch == "main" or .headBranch == "master") then "prod"
-            elif (.headBranch == "staging" or .headBranch == "stg") then "staging"
-            elif (.headBranch == "dev" or .headBranch == "develop") then "dev"
-            else ""
-            end
+            (.workflowName // "" | ascii_downcase) as $wf
+            | (.headBranch // "") as $branch
+            | if ($wf | test("staging|\\bstg\\b")) then "staging"
+              elif ($wf | test("production|\\bprod\\b")) then "prod"
+              elif ($wf | test("preview|\\bdev\\b|develop")) then "dev"
+              elif (.event == "release") then "prod"
+              elif ($branch | test("^v[0-9]")) then "prod"
+              elif ($branch == "main" or $branch == "master") then "prod"
+              elif ($branch == "staging" or $branch == "stg") then "staging"
+              elif ($branch == "dev" or $branch == "develop") then "dev"
+              else ""
+              end
         ),
         build_status: (
             if .status == "completed" then

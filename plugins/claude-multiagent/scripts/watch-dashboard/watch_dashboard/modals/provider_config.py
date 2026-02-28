@@ -64,11 +64,17 @@ class ProviderConfigModal(ModalScreen[dict | None]):
     }
     """
 
-    def __init__(self, provider: str, providers_dir: str) -> None:
+    def __init__(
+        self,
+        provider: str,
+        providers_dir: str,
+        initial_values: dict[str, str] | None = None,
+    ) -> None:
         super().__init__()
         self._provider = provider
         self._providers_dir = providers_dir
         self._fields = provider_config_fields(provider, providers_dir)
+        self._initial_values = initial_values or {}
 
     def compose(self) -> ComposeResult:
         name = provider_display_name(self._provider, self._providers_dir)
@@ -78,13 +84,14 @@ class ProviderConfigModal(ModalScreen[dict | None]):
                 key = field["key"]
                 label = field.get("label", key)
                 default = field.get("default", "")
+                initial = str(self._initial_values.get(key, "") or "")
                 required = field.get("required", False)
                 suffix = " *" if required else ""
                 with Vertical(classes="config-field"):
                     yield Label(f"{label}{suffix}", classes="config-label")
                     yield Input(
                         placeholder=default or f"Enter {label}",
-                        value=default,
+                        value=initial or default,
                         id=f"cfg-{key}",
                     )
             with Horizontal(id="config-buttons"):
