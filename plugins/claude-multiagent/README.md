@@ -52,5 +52,8 @@ Dashboard beads panes use a configurable database scope via
 `CLAUDE_MULTIAGENT_BEADS_DB_MODE`:
 
 - `worktree` (default): isolated DB per worktree at
-  `<worktree>/.beads-worktree/dolt`
+  `<worktree>/.beads/dolt` (legacy `.beads-worktree/dolt` still supported)
 - `shared` (or `repo`): shared DB at `<repo>/.beads/dolt`
+
+Optional explicit override:
+- `CLAUDE_MULTIAGENT_BEADS_DB_PATH=/absolute/path/to/dolt`

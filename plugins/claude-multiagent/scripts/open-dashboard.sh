@@ -18,15 +18,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_DIR="${1:-$PWD}"
 
 # Beads DB scope:
-# - worktree (default): isolate issues per worktree using <worktree>/.beads-worktree/dolt
+# - worktree (default): isolate issues per worktree using <worktree>/.beads/dolt
 # - shared/repo: use the main repo DB (<repo>/.beads/dolt)
+# Optional explicit override: CLAUDE_MULTIAGENT_BEADS_DB_PATH=/abs/path/to/dolt
 BEADS_DB_MODE="${CLAUDE_MULTIAGENT_BEADS_DB_MODE:-worktree}"
+BEADS_DB_PATH_OVERRIDE="${CLAUDE_MULTIAGENT_BEADS_DB_PATH:-}"
 REPO_ROOT="$(dirname "$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null || true)"
 [[ -n "$REPO_ROOT" ]] || REPO_ROOT="$PROJECT_DIR"
-if [[ "$BEADS_DB_MODE" == "shared" || "$BEADS_DB_MODE" == "repo" ]]; then
+if [[ -n "$BEADS_DB_PATH_OVERRIDE" ]]; then
+  BEADS_DB_PATH="$BEADS_DB_PATH_OVERRIDE"
+elif [[ "$BEADS_DB_MODE" == "shared" || "$BEADS_DB_MODE" == "repo" ]]; then
   BEADS_DB_PATH="${REPO_ROOT}/.beads/dolt"
 else
-  BEADS_DB_PATH="${PROJECT_DIR}/.beads-worktree/dolt"
+  # Keep worktree mode aligned with plain `bd` defaults first.
+  # Backward-compat: if a legacy .beads-worktree DB exists, use it.
+  if [[ -d "${PROJECT_DIR}/.beads/dolt" ]]; then
+    BEADS_DB_PATH="${PROJECT_DIR}/.beads/dolt"
+  elif [[ -d "${PROJECT_DIR}/.beads-worktree/dolt" ]]; then
+    BEADS_DB_PATH="${PROJECT_DIR}/.beads-worktree/dolt"
+  else
+    BEADS_DB_PATH="${PROJECT_DIR}/.beads/dolt"
+  fi
 fi
 
 # Run a command with timeout.
@@ -238,6 +250,10 @@ has_beads_process() {
       return
     fi
     # Fallback for worktree-scoped DBs when args are shell-expanded differently.
+    if [[ "$cmdline" == *"${project_dir}/.beads/dolt"* ]]; then
+      echo 1
+      return
+    fi
     if [[ "$cmdline" == *"${project_dir}/.beads-worktree/dolt"* ]]; then
       echo 1
       return
