@@ -484,11 +484,13 @@ _find_multiagent_script() {
 # Open dashboard panes (if available) then launch claude.
 # Pane script is idempotent — safe to call on every launch.
 _claude_launch() {
-  local _ds
-  _ds="$(_find_multiagent_script "open-dashboard.sh" 2>/dev/null)" || true
-  if [[ -n "$_ds" ]]; then
-    "$_ds" "$PWD" &>/dev/null &
-    disown 2>/dev/null
+  if [[ "${CLAUDE_MULTIAGENT_DISABLE:-}" != "1" ]]; then
+    local _ds
+    _ds="$(_find_multiagent_script "open-dashboard.sh" 2>/dev/null)" || true
+    if [[ -n "$_ds" ]]; then
+      "$_ds" "$PWD" &>/dev/null &
+      disown 2>/dev/null
+    fi
   fi
   command claude "$@"
 }
