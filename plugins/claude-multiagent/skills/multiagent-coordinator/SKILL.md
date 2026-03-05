@@ -64,6 +64,15 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 3. Dispatch background sub-agent immediately
 4. If >10 tickets open, discuss priority with user
 
+**Dependencies:** When tasks have ordering requirements, set dependencies so `bd ready` respects them:
+- At creation: `bd create "Task B" --deps "plug-1"` (Task B depends on plug-1)
+- After creation: `bd dep <blocker> --blocks <blocked>` or `bd dep add <blocked> --blocked-by <blocker>`
+- Multiple deps: `bd create "Task C" --deps "plug-1,plug-2"`
+
+`bd ready` only returns tasks with no active blockers — this is how the coordinator knows what to dispatch next. If you skip dependencies, everything shows as ready immediately and dispatch order breaks.
+
+Use `bd blocked` to see what's waiting, `bd dep tree` to visualize the graph.
+
 **Priority:** P0-P4 (0=critical, 4=backlog, default P2). Infer from urgency language. Listed order = priority order.
 
 **New project (bd list empty):** Recommend planning phase — milestones → bd tickets. Proceed if user declines.
@@ -266,7 +275,7 @@ bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build c
   - If missing at 90s: send `SendMessage` ping, "Status update overdue for <ticket-id>. Report blockers now."
   - If still missing after 3 minutes: mark as blocked in your notes, notify user, and reassign ticket if needed.
 - **Auto-assign on completion:** When an agent sends a completion message:
-  1. Run `bd ready` to list unblocked, unassigned tickets
+  1. Run `bd ready` to list unblocked, unassigned tickets (dependencies set via `bd dep` are automatically respected — blocked tickets won't appear)
   2. Take the highest-priority result
   3. `bd update <id> --status in_progress --assignee=<agent-name>`
   4. `SendMessage` to the agent with the new ticket details
