@@ -42,6 +42,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/claude-activity-hook.sh",
+            "async": false
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/close-dashboard.sh",
             "async": false
           }
