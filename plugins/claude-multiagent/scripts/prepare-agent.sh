@@ -247,8 +247,8 @@ info "Worktree ready: $WORKTREE_PATH (branch: $WORKTREE_BRANCH)"
 # Use printf to build the block so special characters (backticks, quotes,
 # em-dashes) are handled correctly without shell interpretation.
 AGENT_REPORTING_BLOCK="$(printf \
-'## Reporting — mandatory.\n\nYour FIRST status update must happen at startup (within 60s).\nThen every 60s, send a status relay to the coordinator via `SendMessage`.\n\nRelay format (required):\n```text\nSTATUS_UPDATE %s\n[<step>/<total>] <activity>\nDone: <completed since last update>\nDoing: <current work>\nBlockers: <blockers or none>\nETA: <estimate>\nFiles: <modified files>\n```\n\nThe coordinator mirrors each STATUS_UPDATE into bead comments. Do not skip the relay.\n\nOptional best-effort direct write if bd works in your sandbox:\n```bash\nbd comments add %s --author \"%s\" \"<same status body>\" || true\n```\n\nIf stuck >3 min, say so in Blockers. Final update: summary, files modified, test results.' \
-  "$PRIMARY_TICKET" "$PRIMARY_TICKET" "$AGENT_NAME")"
+'## Reporting — mandatory.\n\nEvery 60s, post a progress comment to your ticket.\nYou MUST include `--author %s` so comments show your name.\n\n```bash\nbd comments add %s --author "%s" "[<step>/<total>] <activity>\nDone: <completed since last update>\nDoing: <current work>\nBlockers: <blockers or none>\nETA: <estimate>\nFiles: <modified files>"\n```\n\nIf stuck >3 min, say so in Blockers. Final comment: summary, files modified, test results.' \
+  "$AGENT_NAME" "$PRIMARY_TICKET" "$AGENT_NAME")"
 
 ###############################################################################
 # Print eval-safe variable assignments to stdout
