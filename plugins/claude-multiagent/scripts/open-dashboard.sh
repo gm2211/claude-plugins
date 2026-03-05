@@ -17,6 +17,76 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_DIR="${1:-$PWD}"
 
+# Beads DB scope:
+# - worktree (default): use bd's auto-discovery in the worktree directory
+# - shared/repo: use the main repo DB (<repo>/.beads/dolt)
+# Optional explicit override: CLAUDE_MULTIAGENT_BEADS_DB_PATH=/abs/path/to/dolt
+BEADS_DB_MODE="${CLAUDE_MULTIAGENT_BEADS_DB_MODE:-worktree}"
+BEADS_DB_PATH_OVERRIDE="${CLAUDE_MULTIAGENT_BEADS_DB_PATH:-}"
+REPO_ROOT="$(dirname "$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null || true)"
+[[ -n "$REPO_ROOT" ]] || REPO_ROOT="$PROJECT_DIR"
+BEADS_DB_PATH=""
+BEADS_DB_EXPLICIT=0
+if [[ -n "$BEADS_DB_PATH_OVERRIDE" ]]; then
+  BEADS_DB_PATH="$BEADS_DB_PATH_OVERRIDE"
+  BEADS_DB_EXPLICIT=1
+elif [[ "$BEADS_DB_MODE" == "shared" || "$BEADS_DB_MODE" == "repo" ]]; then
+  BEADS_DB_PATH="${REPO_ROOT}/.beads/dolt"
+  BEADS_DB_EXPLICIT=1
+else
+  # Worktree mode: mirror plain `bd` behavior by default (no explicit --db).
+  # Backward-compat: if only the legacy .beads-worktree DB exists, force it.
+  if [[ ! -d "${PROJECT_DIR}/.beads/dolt" && -d "${PROJECT_DIR}/.beads-worktree/dolt" ]]; then
+    BEADS_DB_PATH="${PROJECT_DIR}/.beads-worktree/dolt"
+    BEADS_DB_EXPLICIT=1
+  fi
+fi
+
+# Run a command with timeout.
+# Preference order:
+# 1) GNU timeout
+# 2) Homebrew gtimeout
+# 3) Bash watchdog fallback that returns 124 on timeout
+run_with_timeout() {
+  local seconds="$1"
+  shift
+
+  if command -v timeout &>/dev/null; then
+    timeout "$seconds" "$@"
+  elif command -v gtimeout &>/dev/null; then
+    gtimeout "$seconds" "$@"
+  else
+    local cmd_pid watchdog_pid cmd_status=0
+    local timeout_marker="/tmp/claude-timeout-${$}-${RANDOM}.marker"
+    rm -f "$timeout_marker" 2>/dev/null || true
+
+    "$@" &
+    cmd_pid=$!
+
+    (
+      sleep "$seconds"
+      if kill -0 "$cmd_pid" 2>/dev/null; then
+        : > "$timeout_marker"
+        kill -TERM "$cmd_pid" 2>/dev/null || true
+        sleep 1
+        kill -KILL "$cmd_pid" 2>/dev/null || true
+      fi
+    ) &
+    watchdog_pid=$!
+
+    wait "$cmd_pid" || cmd_status=$?
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+
+    if [[ -f "$timeout_marker" ]]; then
+      rm -f "$timeout_marker" 2>/dev/null || true
+      return 124
+    fi
+
+    return "$cmd_status"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Lock — prevent concurrent runs from creating duplicate panes
 # ---------------------------------------------------------------------------
@@ -49,10 +119,11 @@ trap cleanup_lock EXIT
 # ---------------------------------------------------------------------------
 
 # Extract the focused tab block from dump-layout output.
-# The focused tab contains focus=true in its tab declaration.
+# The focused tab line format varies across zellij versions, so we support
+# multiple focus attributes.
 get_focused_tab_layout() {
   local layout
-  layout=$(timeout 5 zellij action dump-layout 2>/dev/null) || return 1
+  layout=$(run_with_timeout 5 zellij action dump-layout 2>/dev/null) || return 1
 
   local in_focused=0
   local depth=0
@@ -60,8 +131,8 @@ get_focused_tab_layout() {
 
   while IFS= read -r line; do
     if [[ $in_focused -eq 0 ]]; then
-      # Look for a tab line with focus=true
-      if [[ "$line" =~ ^[[:space:]]*tab[[:space:]].*focus=true ]]; then
+      # Look for a focused/active tab declaration.
+      if [[ "$line" =~ ^[[:space:]]*tab[[:space:]].*(focus=true|is_focused=true|active=true|selected=true|current=true|focus[[:space:]]+true|is_focused[[:space:]]+true) ]]; then
         in_focused=1
         depth=1
         result="$line"$'\n'
@@ -78,6 +149,7 @@ get_focused_tab_layout() {
     fi
   done <<< "$layout"
 
+  [[ -n "$result" ]] || return 1
   printf '%s' "$result"
 }
 
@@ -138,10 +210,12 @@ has_dashboard_pane() {
   local script_name="$3"  # e.g. "watch-beads.py"
   local project_dir="$4"  # e.g. "/Users/me/my-project" (used to scope script-name fallback)
   while IFS= read -r line; do
-    # Match by pane name attribute: name="dashboard-beads"
+    # Match by pane name (supports multiple dump-layout formats).
     # Named panes include a DASH_ID suffix (e.g. dashboard-beads-abc12345) and
     # are already scoped to the focused tab, so no project-dir check needed.
-    if [[ "$line" == *"name=\"${pane_name}"* ]]; then
+    # We intentionally match on "<pane_name>-" anywhere in the line because
+    # zellij output formats vary across versions (name="...", name=..., name "...").
+    if [[ "$line" == *"${pane_name}-"* ]]; then
       echo 1
       return
     fi
@@ -159,6 +233,54 @@ has_dashboard_pane() {
       return
     fi
   done <<< "$layout"
+  echo 0
+}
+
+# Process-level fallback detection for panes when layout parsing is incomplete.
+# These checks are project-scoped to avoid cross-project false positives.
+has_beads_process() {
+  local project_dir="$1"
+  local db_path="${2:-}"
+
+  local pids pid cmdline
+  pids=$(pgrep -f 'beads_tui' 2>/dev/null || true)
+  for pid in $pids; do
+    cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
+    if [[ -n "$db_path" && "$cmdline" == *"$db_path"* ]]; then
+      echo 1
+      return
+    fi
+    # Match by process cwd for auto-discovery mode (no explicit --db-path).
+    local cwd
+    cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | awk '/^n/ {print substr($0,2)}' || true)
+    if [[ "$cwd" == "$project_dir" ]]; then
+      echo 1
+      return
+    fi
+    # Fallback for worktree-scoped DBs when args are shell-expanded differently.
+    if [[ "$cmdline" == *"${project_dir}/.beads/dolt"* ]]; then
+      echo 1
+      return
+    fi
+    if [[ "$cmdline" == *"${project_dir}/.beads-worktree/dolt"* ]]; then
+      echo 1
+      return
+    fi
+  done
+  echo 0
+}
+
+has_watch_process() {
+  local project_dir="$1"
+  local pids pid cmdline
+  pids=$(pgrep -f 'watch_dashboard' 2>/dev/null || true)
+  for pid in $pids; do
+    cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
+    if [[ "$cmdline" == *"--project-dir ${project_dir}"* ]] || [[ "$cmdline" == *"$project_dir"* ]]; then
+      echo 1
+      return
+    fi
+  done
   echo 0
 }
 
@@ -306,6 +428,15 @@ if [[ "$has_deploys" -eq 1 ]] || [[ "$has_ghactions" -eq 1 ]]; then
   has_dashboard=1
 fi
 
+# Fallback: if layout matching misses panes, use project-scoped process checks
+# to prevent duplicate pane creation.
+if [[ "$has_beads" -eq 0 ]]; then
+  has_beads=$(has_beads_process "$PROJECT_DIR" "$BEADS_DB_PATH")
+fi
+if [[ "$has_dashboard" -eq 0 ]]; then
+  has_dashboard=$(has_watch_process "$PROJECT_DIR")
+fi
+
 all_present=true
 if $beads_pane_enabled && [[ "$has_beads" -eq 0 ]]; then
   all_present=false
@@ -339,11 +470,10 @@ if $beads_pane_enabled && [[ "$has_beads" -eq 0 ]]; then
   # Create beads pane to the right of Claude. Focus moves to beads.
   BEADS_TUI_DIR="${SCRIPT_DIR}/beads-tui"
   _bd_path="$(command -v bd 2>/dev/null || true)"
-  # Resolve db path through git to the main repo root so worktrees find the
-  # actual Dolt database (which lives at <main-repo>/.beads/dolt, not in the
-  # worktree directory).
-  _repo_root="$(dirname "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null)" || _repo_root="$PROJECT_DIR"
-  BDT_ARGS=(--db-path "${_repo_root}/.beads/dolt")
+  BDT_ARGS=()
+  if [[ "$BEADS_DB_EXPLICIT" -eq 1 && -n "$BEADS_DB_PATH" ]]; then
+    BDT_ARGS+=(--db-path "$BEADS_DB_PATH")
+  fi
   [[ -n "$_bd_path" ]] && BDT_ARGS+=(--bd-path "$_bd_path")
 
   # When running from the plugin cache, run.sh and .venv may be missing even

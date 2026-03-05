@@ -56,9 +56,14 @@ class ProviderManageModal(ModalScreen[str | None]):
         with Vertical(id="manage-dialog"):
             yield Label(f"Current provider: {self._provider_name}", id="manage-title")
             with Horizontal(id="manage-buttons"):
-                yield Button("Change", variant="primary", id="manage-change-btn")
+                yield Button("Configure", variant="primary", id="manage-configure-btn")
+                yield Button("Change", id="manage-change-btn")
                 yield Button("Remove", variant="error", id="manage-remove-btn")
                 yield Button("Cancel", id="manage-cancel-btn")
+
+    @on(Button.Pressed, "#manage-configure-btn")
+    def _on_configure(self) -> None:
+        self.dismiss("configure")
 
     @on(Button.Pressed, "#manage-change-btn")
     def _on_change(self) -> None:

@@ -34,7 +34,7 @@ class WatchDashboardApp(App):
         Binding("q", "quit", "Quit", priority=True),
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("r", "refresh", "Refresh"),
-        Binding("p", "provider_config", "Provider", show=False),
+        Binding("p", "provider_config", "Providers"),
         Binding("d", "disable_deploy", "Disable", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),

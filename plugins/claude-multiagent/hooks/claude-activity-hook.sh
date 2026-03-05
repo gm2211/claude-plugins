@@ -14,6 +14,11 @@
 
 set -euo pipefail
 
+# Allow per-launch opt-out from shell wrapper.
+if [[ "${CLAUDE_MULTIAGENT_DISABLE:-}" == "1" ]]; then
+    exit 0
+fi
+
 # Only run inside a zellij session
 if [ -z "${ZELLIJ:-}" ]; then
     exit 0
@@ -40,7 +45,7 @@ get_focused_tab_name() {
                 sub(/.*name="/, "", line)
                 sub(/".*/, "", line)
                 name = line
-                if ($0 ~ /focus=true/) {
+                if ($0 ~ /focus=true|is_focused=true|active=true|selected=true|current=true|focus true|is_focused true/) {
                     print name
                 }
             }
@@ -119,15 +124,21 @@ do_tab_rename() {
     local our_tab_name
     our_tab_name="$(get_tab_name_for_cwd "${PWD}" "$layout")"
 
-    if [ -z "$our_tab_name" ]; then
-        # Cannot determine our tab — skip tab rename, only do global pipe
-        return
-    fi
-
     # Find which tab is currently focused (used both for the focused-tab guard and
     # to restore focus after renaming)
     local focused_tab
     focused_tab="$(get_focused_tab_name "$layout")"
+
+    if [ -z "$our_tab_name" ]; then
+        # Fallback: when cwd matching fails, clear the marker from the tab
+        # the user is currently viewing.
+        if [ "$mode" = "remove" ] && [ -n "$focused_tab" ] && [[ "$focused_tab" == "${NOTIFICATION_PREFIX}"* ]]; then
+            our_tab_name="$focused_tab"
+        else
+            # Cannot determine our tab — skip tab rename, only do global pipe
+            return
+        fi
+    fi
 
     # Compute the new tab name
     local new_name

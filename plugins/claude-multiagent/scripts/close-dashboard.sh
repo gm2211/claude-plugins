@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+# Allow per-launch opt-out from shell wrapper.
+if [[ "${CLAUDE_MULTIAGENT_DISABLE:-}" == "1" ]]; then
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # Debug logging
 # ---------------------------------------------------------------------------
@@ -98,7 +103,8 @@ extract_dashboard_id_from_layout() {
   local layout="$1"
   local id=""
   while IFS= read -r line; do
-    if [[ "$line" =~ name=\"dashboard-(beads|deploys|watch)-([a-f0-9]+)\" ]]; then
+    # Match dashboard IDs regardless of dump-layout quoting/attribute style.
+    if [[ "$line" =~ dashboard-(beads|deploys|watch)-([a-f0-9]+) ]]; then
       id="${BASH_REMATCH[2]}"
       break
     fi
@@ -113,7 +119,7 @@ extract_project_dashboard_id() {
 
   # Collect all dashboard IDs from the layout
   while IFS= read -r line; do
-    if [[ "$line" =~ name=\"dashboard-(beads|deploys|watch)-([a-f0-9]+)\" ]]; then
+    if [[ "$line" =~ dashboard-(beads|deploys|watch)-([a-f0-9]+) ]]; then
       local candidate="${BASH_REMATCH[2]}"
       # Check if this ID is already in our list
       local found=false
@@ -270,9 +276,15 @@ for script in "${WATCH_SCRIPTS[@]}"; do
     else
       cmdline_exact_match=false
       if [[ "$script" == "bdt" || "$script" == "beads_tui" ]]; then
-        # Substring match: PROJECT_DIR appears inside --db-path value
+        # Substring match: PROJECT_DIR may appear inside --db-path value.
+        # In auto-discovery mode, there may be no --db-path; then match by cwd.
         if [[ "$cmdline" == *"$PROJECT_DIR"* ]]; then
           cmdline_exact_match=true
+        else
+          proc_cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | grep '^n' | sed 's/^n//' || true)
+          if [[ "$proc_cwd" == "$PROJECT_DIR" ]]; then
+            cmdline_exact_match=true
+          fi
         fi
       else
         read -ra cmdline_words <<< "$cmdline"

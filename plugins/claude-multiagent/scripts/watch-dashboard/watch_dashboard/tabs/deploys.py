@@ -26,6 +26,13 @@ from ..providers import (
 _log = logging.getLogger("watch-dashboard")
 
 
+# Textual DataTable hover events can render badly under some terminals/multiplexers
+# (ghost header rows on mouse movement). Keep list navigation keyboard-only.
+class _KeyboardOnlyDataTable(DataTable):
+    def _on_mouse_move(self, event) -> None:  # type: ignore[override]
+        event.stop()
+
+
 # ---------------------------------------------------------------------------
 # Status styling helpers
 # ---------------------------------------------------------------------------
@@ -98,11 +105,19 @@ class DeploysTab(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="deploy-service-url")
-        yield DataTable(id="deploy-table", cursor_type="row", zebra_stripes=True)
+        yield Static("", id="deploy-env-summary")
+        yield _KeyboardOnlyDataTable(
+            id="deploy-table",
+            cursor_type="row",
+            zebra_stripes=True,
+            show_row_labels=False,
+            header_height=1,
+        )
         yield Static("", id="deploy-status")
 
     def on_mount(self) -> None:
         table = self.query_one("#deploy-table", DataTable)
+        table.mouse_hover = False
         table.add_columns("Commit", "Version", "Env", "Message", "Build", "Deploy", "Elapsed")
         self._refresh_data()
 
@@ -154,6 +169,56 @@ class DeploysTab(Vertical):
 
         self.query_one("#deploy-status", Static).update(msg)
         self.query_one("#deploy-service-url", Static).update("")
+        self.query_one("#deploy-env-summary", Static).update("")
+
+    @staticmethod
+    def _normalize_env_name(name: str) -> str:
+        env = name.strip().lower()
+        if env in ("production",):
+            return "prod"
+        if env in ("stg",):
+            return "staging"
+        return env
+
+    @staticmethod
+    def _revision_for_record(record: dict) -> str:
+        revision = str(record.get("commit", "") or "").strip()
+        if not revision:
+            revision = str(record.get("tag", "") or record.get("version", "") or "").strip()
+        if (
+            len(revision) > 7
+            and all(ch in "0123456789abcdefABCDEF" for ch in revision)
+        ):
+            return revision[:7]
+        return revision
+
+    def _environment_summary(self, records: list[dict]) -> Text:
+        latest_by_env: dict[str, str] = {}
+        for rec in records:
+            env = self._normalize_env_name(str(rec.get("environment", "") or ""))
+            if not env:
+                continue
+            revision = self._revision_for_record(rec)
+            if not revision:
+                continue
+            if env not in latest_by_env:
+                latest_by_env[env] = revision
+
+        if not latest_by_env:
+            return Text("")
+
+        ordered_envs = ["prod", "staging"]
+        extras = sorted([e for e in latest_by_env if e not in ordered_envs])
+        envs = [e for e in ordered_envs if e in latest_by_env] + extras
+
+        parts: list[Text] = [Text("Env commits: ", style="dim")]
+        for idx, env in enumerate(envs):
+            style = _ENV_STYLES.get(env, "dim")
+            parts.append(Text(f"{env}", style=style))
+            parts.append(Text(f" {latest_by_env[env]}", style="bold #89b4fa"))
+            if idx < len(envs) - 1:
+                parts.append(Text(" | ", style="dim"))
+        return Text.assemble(*parts)
 
     def _populate_table(self) -> None:
         """Populate the DataTable with cached records."""
@@ -176,6 +241,7 @@ class DeploysTab(Vertical):
                 break
         url_widget = self.query_one("#deploy-service-url", Static)
         url_widget.update(Text(service_url, style="#89b4fa") if service_url else "")
+        self.query_one("#deploy-env-summary", Static).update(self._environment_summary(records))
 
         for rec in records:
             commit = Text(rec.get("commit", "")[:7], style="bold")
@@ -214,11 +280,20 @@ class DeploysTab(Vertical):
         def _on_pick(provider: str | None) -> None:
             if provider is None:
                 return
-            self._configure_provider_fields(provider)
+            cfg = config_read(self._config_file)
+            existing = cfg.get(provider, {})
+            self._configure_provider_fields(
+                provider,
+                initial_values=existing if isinstance(existing, dict) else {},
+            )
 
         self.app.push_screen(ProviderPicker(self._providers_dir), callback=_on_pick)
 
-    def _configure_provider_fields(self, provider: str) -> None:
+    def _configure_provider_fields(
+        self,
+        provider: str,
+        initial_values: dict[str, str] | None = None,
+    ) -> None:
         """Show config fields modal for the selected provider."""
         from ..modals.provider_config import ProviderConfigModal
 
@@ -234,7 +309,11 @@ class DeploysTab(Vertical):
             self._refresh_data()
 
         self.app.push_screen(
-            ProviderConfigModal(provider, self._providers_dir),
+            ProviderConfigModal(
+                provider,
+                self._providers_dir,
+                initial_values=initial_values,
+            ),
             callback=_on_config,
         )
 
@@ -248,9 +327,16 @@ class DeploysTab(Vertical):
         from ..modals.provider_manage import ProviderManageModal
 
         name = provider_display_name(provider, self._providers_dir)
+        current_cfg = config_read(self._config_file)
+        existing_vals = current_cfg.get(provider, {})
 
         def _on_manage(action: str | None) -> None:
-            if action == "change":
+            if action == "configure":
+                self._configure_provider_fields(
+                    provider,
+                    initial_values=existing_vals if isinstance(existing_vals, dict) else {},
+                )
+            elif action == "change":
                 self.configure_provider()
             elif action == "remove":
                 config_remove(self._config_file)

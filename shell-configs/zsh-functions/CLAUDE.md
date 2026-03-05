@@ -44,6 +44,7 @@ To update to the latest version of the functions:
 | Function | Description |
 |----------|-------------|
 | `ss`       | Saves the current clipboard image to a temp file (via `pngpaste`) and copies the file path to the clipboard. |
-| `wt`       | Pure worktree selector. On the default branch, lists existing session worktrees and cd's into the chosen one. Prints a helpful message and returns 1 if no worktrees exist. |
+| `wt`       | Worktree selector menu. On the default branch, lists existing session worktrees and cd's into the chosen one. The menu also includes a built-in delete action (`[delete]`) so you can remove worktrees from the same flow. |
 | `wt new`   | Worktree creator subcommand. Offers a date-based session name (`session-YYYY-MM-DD`, with `-N` suffix for duplicates) or accepts a custom name. Creates the worktree and cd's into it. |
-| `claude`   | Wraps `wt`/`wt new` for Claude Code. On the default branch, tries `wt` (selector) first; if that fails (no worktrees), falls back to `wt new` (creator); then launches Claude inside the chosen worktree (in a subshell so the cd does not affect the parent shell). |
+| `wt delete [name]` | Worktree remover subcommand. Deletes a worktree under `.worktrees/` (interactive picker if `name` is omitted). Asks for confirmation before delete. |
+| `claude`   | Wraps `wt`/`wt new` for Claude Code. On the default branch, tries `wt` (selector) first; if that fails (no worktrees), falls back to `wt new` (creator); then launches Claude inside the chosen worktree. `claude --skip` / `claude -s` bypasses worktree checks and disables claude-multiagent hooks for that launch. |

@@ -23,7 +23,7 @@ HELP_TEXT = """\
   [bold]q[/bold]                Quit
 
 [bold underline]Deploys Tab[/bold underline]
-  [bold]p[/bold]                Configure / change deploy provider
+  [bold]p[/bold]                Open Providers (configure / change)
   [bold]d[/bold]                Disable dashboard pane for this project
 
 [bold underline]Tab configuration (.deploy-watch.json)[/bold underline]

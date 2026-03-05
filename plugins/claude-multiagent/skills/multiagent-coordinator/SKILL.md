@@ -72,7 +72,7 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 
 ## Sub-Agents
 
-- Create team per session: `TeamCreate`
+- **Create team per session:** Call `TeamCreate` before your first dispatch. Required for `SendMessage` course corrections (redirecting agents, unblocking, assigning new work). Status updates use `bd comments add` directly and don't depend on the team, but course corrections do.
 - Spawn via `Task` with `team_name`, `name`, type `general-purpose`, and a model chosen by task complexity:
   - **Haiku** (`haiku`): trivial/mechanical tasks — filing issues, finding files, reading/summarizing content, simple searches
   - **Sonnet** (`sonnet`): well-scoped implementation with clear acceptance criteria — editing specific files, writing a provider script, fixing a known bug
@@ -152,16 +152,42 @@ Example:
 > Nested worktrees (`.worktrees/session/.worktrees/task/`) are a bug.
 > The worktree-setup.sh script prevents this automatically. Never bypass it.
 
-**FORBIDDEN: Never run `git worktree add` directly. ALWAYS use `worktree-setup.sh`.**
+**FORBIDDEN: Never run `git worktree add` directly.**
+**Use `prepare-agent.sh` for all agent dispatch prep (assignment + worktree + reporting block).**
 
-**Use the worktree-setup script to create worktrees (can be called from within the session worktree):**
+**Use the prepare-agent script for every dispatch (can be called from within the session worktree):**
 
 ```bash
-eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" <bead-id>)"
-# Now WORKTREE_PATH, WORKTREE_BRANCH, WORKTREE_TYPE, SESSION_SLUG are set
+eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/prepare-agent.sh" \
+  --name <agent-name> \
+  --tickets <ticket-id>)"
+# Now: WORKTREE_PATH, WORKTREE_BRANCH, AGENT_NAME, PRIMARY_TICKET, AGENT_REPORTING_BLOCK
 ```
 
-The script enforces naming conventions and prevents common mistakes (nesting, wrong branch). It reads bead metadata via `bd show` to determine the worktree type, generates slugs, and creates the worktree with the correct `<session>--<task>` naming. The script automatically resolves REPO_ROOT to the main repo root, so task worktrees are always created at `<repo-root>/.worktrees/<session>--<task>/`.
+`prepare-agent.sh` is mandatory because it:
+1. Sets `status=in_progress` and `assignee=<agent-name>` for each dispatched ticket
+2. Verifies the ticket updates persisted
+3. Creates/reuses the correct worktree via `worktree-setup.sh`
+4. Returns a preformatted `AGENT_REPORTING_BLOCK` to paste into the prompt
+
+If `prepare-agent.sh` fails, do not dispatch. Fix the ticket/worktree issue first.
+
+#### Canonical Dispatch Flow (MUST)
+
+For every new ticket assignment, use exactly this flow:
+
+1. Run `prepare-agent.sh`:
+   ```bash
+   eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/prepare-agent.sh" \
+     --name <agent-name> \
+     --tickets <ticket-id>)"
+   ```
+2. Dispatch `Task` immediately with:
+   - `name` = `AGENT_NAME` (must match ticket assignee)
+   - `run_in_background` = `true`
+   - Prompt includes `WORKTREE_PATH` and `PRIMARY_TICKET`
+3. Start the prompt with the workspace confinement block.
+4. Paste `AGENT_REPORTING_BLOCK` verbatim (do not hand-write reporting instructions).
 
 **After creating the worktree, include a confinement block at the TOP of every agent prompt** (before anything else):
 ```
@@ -210,6 +236,8 @@ bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build c
 >
 > If stuck >3 min, say so in Blockers. Final comment: summary, files modified, test results.
 
+**NOTE:** When using `prepare-agent.sh`, the `AGENT_REPORTING_BLOCK` variable contains a pre-formatted version of these instructions with agent name and ticket ID already substituted. Always paste `AGENT_REPORTING_BLOCK` verbatim into the agent prompt.
+
 ## Visual Verification for UI Tasks
 
 - **When to include:** If the ticket involves visual/UI changes (web frontend, terminal TUI, CLI output formatting, dashboard panes), append the block below to the agent prompt.
@@ -234,12 +262,15 @@ bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build c
 ## Workload Management
 
 - **Track status:** Maintain a mental map of `<agent-name> → <ticket-id>` for every active agent.
+- **First-update SLA:** Every dispatch must produce a first `bd comments add` within 90 seconds.
+  - If missing at 90s: send `SendMessage` ping, "Status update overdue for <ticket-id>. Report blockers now."
+  - If still missing after 3 minutes: mark as blocked in your notes, notify user, and reassign ticket if needed.
 - **Auto-assign on completion:** When an agent sends a completion message:
   1. Run `bd ready` to list unblocked, unassigned tickets
   2. Take the highest-priority result
   3. `bd update <id> --status in_progress --assignee=<agent-name>`
   4. `SendMessage` to the agent with the new ticket details
-- **Stuck detection:** If an agent has posted no progress comment for >5 min, send a check-in via `SendMessage`: "Any blockers on `<ticket-id>`?"
+- **Stuck detection:** If no bd comment for >5 min, send a check-in via `SendMessage`: "Any blockers on `<ticket-id>`?"
 - **Capacity limits:** Never have more active agents than the agreed max concurrency. Queue new tickets rather than over-dispatching.
 - **Idle agents:** After every merge, check `bd ready` — if work exists and capacity allows, immediately assign the next ticket.
 

@@ -29,6 +29,8 @@ CLAUDE_MODEL=""
 MAX_BUDGET_USD=""
 ATTACH_MODE="false"
 NO_PUSH="false"
+GH_AVAILABLE="false"
+PERSIST_REPO="false"
 
 usage() {
     cat <<'USAGE'
@@ -40,6 +42,7 @@ Options:
   --rebuild     Force rebuild the Docker image
   --attach      List running containers and attach to one
   --no-push     Autonomous mode: commits local only, no git push
+  --persistent  Reuse a per-repo Docker volume instead of fresh clone
   --prompt CMD  Run non-interactively with this prompt
   --branch BR   Checkout this branch
   --model MOD   Use this Claude model
@@ -67,6 +70,10 @@ parse_args() {
                 ;;
             --no-push)
                 NO_PUSH="true"
+                shift
+                ;;
+            --persistent)
+                PERSIST_REPO="true"
                 shift
                 ;;
             --prompt=*)
@@ -127,17 +134,33 @@ check_prerequisites() {
         die "Docker daemon is not running. Start Docker Desktop and try again."
     fi
 
-    if ! command -v gh &>/dev/null; then
-        die "GitHub CLI (gh) is not installed.\n  macOS: brew install gh\n  Linux: https://github.com/cli/cli/blob/trunk/docs/install_linux.md"
+    if command -v gh &>/dev/null; then
+        GH_AVAILABLE="true"
+    else
+        GH_AVAILABLE="false"
+        warn "GitHub CLI (gh) not found. Falling back to GH_TOKEN/manual repo mode."
     fi
 }
 
 # ── Step 2: GitHub Authentication ─────────────────────────────
 
 ensure_gh_auth() {
+    if [ -n "${GH_TOKEN:-}" ]; then
+        success "Using GH_TOKEN from environment"
+        return 0
+    fi
+
+    if [ "$GH_AVAILABLE" != "true" ]; then
+        die "GH_TOKEN is not set and GitHub CLI (gh) is not installed.\n  Install gh: brew install gh\n  Or set GH_TOKEN and rerun."
+    fi
+
     if gh auth status &>/dev/null; then
         success "GitHub CLI authenticated"
         return 0
+    fi
+
+    if ! _tty_available; then
+        die "No GH_TOKEN set and gh is not authenticated in a non-interactive shell.\n  Run 'gh auth login' first, or set GH_TOKEN."
     fi
 
     info "GitHub authentication required. Using device code flow (no browser needed)."
@@ -154,45 +177,54 @@ ensure_gh_auth() {
 
 # ── Container Detection & Attachment ─────────────────────────
 
-CONTAINER_IDS=()
+container_rows() {
+    local cid found
+    found="false"
 
-list_containers() {
-    # Find ALL containers (running + stopped) from the claude-multiagent image
-    local containers
-    containers=$(docker ps -a --filter "ancestor=$IMAGE_NAME" --format '{{.ID}}' 2>/dev/null)
+    while IFS= read -r cid; do
+        [ -z "$cid" ] && continue
+        local repo repo_display name status prompt_value
+        repo=$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^REPO=' | cut -d= -f2- || true)
+        prompt_value=$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^CLAUDE_PROMPT=' | cut -d= -f2- || true)
 
-    if [ -z "$containers" ]; then
-        return 1
-    fi
+        # Only show containers that are expected to be attachable shells.
+        # Task containers launched with CLAUDE_PROMPT are intentionally excluded.
+        if [ -n "${prompt_value:-}" ]; then
+            continue
+        fi
 
+        found="true"
+        if [[ "${repo:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+            repo_display="$repo"
+        else
+            repo_display="custom"
+        fi
+        name=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | sed 's|^/||' || true)
+        status=$(docker ps -a --filter "id=$cid" --format '{{.Status}}' 2>/dev/null || true)
+        printf '%s\t%s\t%s\t%s\n' "$cid" "${name:-$cid}" "${repo_display:-custom}" "${status:-unknown}"
+    done < <(docker ps -a --filter "ancestor=$IMAGE_NAME" --format '{{.ID}}' 2>/dev/null)
+
+    [ "$found" = "true" ] || return 1
+}
+
+print_container_table() {
+    local rows="$1"
     local i=1
-    CONTAINER_IDS=()
-    CONTAINER_STATES=()
     echo ""
     info "Existing claude-multiagent containers:"
     echo ""
     printf "  %3s  %-20s  %-30s  %s\n" "#" "NAME" "REPO" "STATUS"
     printf "  %3s  %-20s  %-30s  %s\n" "---" "--------------------" "------------------------------" "--------"
-
-    while IFS= read -r cid; do
-        CONTAINER_IDS+=("$cid")
-        local repo name status state
-        repo=$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^REPO=' | cut -d= -f2-)
-        name=$(docker inspect "$cid" --format '{{.Name}}' | sed 's|^/||')
-        status=$(docker ps -a --filter "id=$cid" --format '{{.Status}}')
-        state=$(docker inspect "$cid" --format '{{.State.Status}}')
-        CONTAINER_STATES+=("$state")
-        printf "  %3d  %-20s  %-30s  %s\n" "$i" "${name:-$cid}" "${repo:-unknown}" "$status"
+    while IFS=$'\t' read -r _cid name repo status; do
+        printf "  %3d  %-20s  %-30s  %s\n" "$i" "$name" "$repo" "$status"
         ((i++))
-    done <<< "$containers"
-
-    return 0
+    done <<< "$rows"
 }
 
 attach_to_container() {
     local cid="$1"
     local state
-    state=$(docker inspect "$cid" --format '{{.State.Status}}' 2>/dev/null)
+    state=$(docker inspect "$cid" --format '{{.State.Status}}' 2>/dev/null || true)
 
     if [ "$state" = "exited" ] || [ "$state" = "created" ]; then
         info "Restarting stopped container..."
@@ -209,108 +241,87 @@ _tty_available() {
     [ -t 0 ] || { [ -e /dev/tty ] && : </dev/tty 2>/dev/null; }
 }
 
-# Build fzf display lines from the current CONTAINER_IDS arrays.
-# Each line: "NAME  REPO  STATUS"
-_container_fzf_lines() {
-    local i=0
-    while [ "$i" -lt "${#CONTAINER_IDS[@]}" ]; do
-        local cid="${CONTAINER_IDS[$i]}"
-        local repo name status
-        repo=$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^REPO=' | cut -d= -f2-)
-        name=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | sed 's|^/||')
-        status=$(docker ps -a --filter "id=$cid" --format '{{.Status}}' 2>/dev/null)
-        printf "%-20s  %-30s  %s\n" "${name:-$cid}" "${repo:-unknown}" "${status:-unknown}"
-        ((i++))
-    done
+_use_fzf() {
+    [ "${MULTIAGENT_USE_FZF:-0}" = "1" ] && _tty_available && command -v fzf >/dev/null 2>&1
 }
 
-# Given a fzf-selected line, return the 0-based index of the matching container.
-_container_index_from_line() {
-    local selected="$1"
-    local selected_name
-    selected_name=$(printf '%s' "$selected" | awk '{print $1}')
-    local i=0
-    while [ "$i" -lt "${#CONTAINER_IDS[@]}" ]; do
-        local cid="${CONTAINER_IDS[$i]}"
-        local name
-        name=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | sed 's|^/||')
-        if [ "${name:-$cid}" = "$selected_name" ]; then
-            echo "$i"
-            return 0
+repo_volume_name() {
+    local slug
+    slug=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9_.-]#-#g')
+    printf 'claude-repo-%s' "$slug"
+}
+
+select_container_and_attach() {
+    local rows="$1"
+    local allow_new="${2:-false}"
+    if _use_fzf; then
+        local selected
+        selected=$(printf '%s\n' "$rows" | fzf --height=~50% --reverse \
+            --delimiter=$'\t' --with-nth=2,3,4 \
+            --prompt="Select container to attach: " \
+            --header="Arrow keys to navigate, Enter to select, Esc for new launch" \
+            2>/dev/null </dev/tty)
+        local fzf_exit=$?
+        if [ "$fzf_exit" -ne 0 ] || [ -z "$selected" ]; then
+            [ "$allow_new" = "true" ] && return 1
+            die "No container selected."
         fi
-        ((i++))
-    done
-    return 1
+        attach_to_container "$(printf '%s' "$selected" | cut -f1)"
+        return 0
+    fi
+
+    if _tty_available; then
+        local -a ids=()
+        while IFS=$'\t' read -r cid _name _repo _status; do
+            ids+=("$cid")
+        done <<< "$rows"
+
+        local choice=""
+        if [ "$allow_new" = "true" ]; then
+            printf "  Enter container number to attach, or n for new: "
+        else
+            printf "  Enter container number to attach: "
+        fi
+        read -r choice </dev/tty
+        if [ "$allow_new" = "true" ] && { [ -z "$choice" ] || [ "$choice" = "n" ] || [ "$choice" = "N" ]; }; then
+            return 1
+        fi
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#ids[@]}" ]; then
+            attach_to_container "${ids[$((choice-1))]}"
+        else
+            die "Invalid selection: $choice"
+        fi
+        return 0
+    fi
+
+    [ "$allow_new" = "true" ] && return 1
+    error "No TTY available for interactive selection."
+    die "Run launch.sh --attach in an interactive terminal."
 }
 
 check_existing_containers() {
-    if [ "$ATTACH_MODE" = "true" ]; then
-        if list_containers; then
-            echo ""
-            local choice=""
-            if _tty_available && command -v fzf >/dev/null 2>&1; then
-                # fzf mode
-                local selected
-                selected=$(_container_fzf_lines | fzf --height=~50% --reverse \
-                    --prompt="Select container to attach: " \
-                    --header="Arrow keys to navigate, Enter to select, Esc to cancel" \
-                    2>/dev/null </dev/tty)
-                local fzf_exit=$?
-                if [ "$fzf_exit" -ne 0 ] || [ -z "$selected" ]; then
-                    die "No container selected."
-                fi
-                local idx
-                idx=$(_container_index_from_line "$selected") || die "Could not resolve selected container."
-                attach_to_container "${CONTAINER_IDS[$idx]}"
-            elif _tty_available; then
-                # Numbered list fallback
-                printf "  Enter container number to attach: "
-                read -r choice </dev/tty
-                if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#CONTAINER_IDS[@]}" ]; then
-                    attach_to_container "${CONTAINER_IDS[$((choice-1))]}"
-                else
-                    die "Invalid selection: $choice"
-                fi
-            else
-                error "No TTY available for interactive selection."
-                die "Run launch.sh --attach in an interactive terminal."
-            fi
-        else
-            die "No containers found. Launch a new one without --attach."
-        fi
+    local rows
+    if ! rows="$(container_rows)"; then
+        die "No containers found. Launch a new one without --attach."
     fi
 
-    # Non-attach mode: if containers exist, offer to attach or start new
-    if list_containers 2>/dev/null; then
-        echo ""
-        if _tty_available && command -v fzf >/dev/null 2>&1; then
-            # fzf mode — Esc means start new
-            local selected
-            selected=$(_container_fzf_lines | fzf --height=~50% --reverse \
-                --prompt="Attach to existing or Esc for new: " \
-                --header="Arrow keys to navigate, Enter to select, Esc to start new" \
-                2>/dev/null </dev/tty)
-            local fzf_exit=$?
-            if [ "$fzf_exit" -eq 0 ] && [ -n "$selected" ]; then
-                local idx
-                idx=$(_container_index_from_line "$selected") || die "Could not resolve selected container."
-                attach_to_container "${CONTAINER_IDS[$idx]}"
-            fi
-            # Esc or empty → fall through to start a new container
-        elif _tty_available; then
-            # Numbered list fallback
-            local choice=""
-            printf "  Attach to existing (enter number) or start new (n): "
-            read -r choice </dev/tty
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#CONTAINER_IDS[@]}" ]; then
-                attach_to_container "${CONTAINER_IDS[$((choice-1))]}"
-            fi
-        else
-            # No TTY — list containers and fall through to start new
-            warn "No TTY available; skipping container selection. Starting a new container."
-        fi
-        echo ""
+    print_container_table "$rows"
+    echo ""
+    select_container_and_attach "$rows" "false"
+}
+
+maybe_attach_existing_containers() {
+    local rows
+    rows="$(container_rows 2>/dev/null || true)"
+    [ -n "$rows" ] || return 0
+
+    print_container_table "$rows"
+    echo ""
+    info "Select a container to attach, or cancel to start a new launch."
+    if select_container_and_attach "$rows" "true"; then
+        return 0
     fi
+    info "Starting a new container launch..."
 }
 
 # ── Step 3: Repo Selection ────────────────────────────────────
@@ -326,9 +337,12 @@ select_repo() {
     info "Select a repository:"
     echo ""
 
-    # Fetch recent repos
+    # Fetch recent repos (when gh is available); otherwise manual entry.
     local repos
-    repos=$(gh repo list --limit 15 --json nameWithOwner -q '.[].nameWithOwner' 2>/dev/null || true)
+    repos=""
+    if [ "$GH_AVAILABLE" = "true" ]; then
+        repos=$(gh repo list --limit 15 --json nameWithOwner -q '.[].nameWithOwner' 2>/dev/null || true)
+    fi
 
     if [ -n "$repos" ]; then
         local repo_array=()
@@ -336,7 +350,7 @@ select_repo() {
             repo_array+=("$repo")
         done <<< "$repos"
 
-        if _tty_available && command -v fzf >/dev/null 2>&1; then
+        if _use_fzf; then
             # fzf mode
             local selected
             selected=$(printf '%s\n' "${repo_array[@]}" | fzf --height=~50% --reverse \
@@ -432,10 +446,32 @@ build_image() {
 launch_container() {
     # Generate a container name from the repo
     local container_name
+    local repo_volume=""
     container_name="claude-$(echo "$REPO" | tr '/' '-' | tr '.' '-')"
+    if [ "$PERSIST_REPO" = "true" ]; then
+        repo_volume="$(repo_volume_name)"
+    fi
+
+    # If a same-name container is already running, reuse it instead of failing
+    local existing_state
+    local existing_prompt
+    existing_state=$(docker inspect "$container_name" --format '{{.State.Status}}' 2>/dev/null || true)
+    existing_prompt=$(docker inspect "$container_name" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^CLAUDE_PROMPT=' | cut -d= -f2- || true)
+    if [ "$existing_state" = "running" ]; then
+        if [ -n "${existing_prompt:-}" ]; then
+            die "Container '$container_name' is a task container (CLAUDE_PROMPT set) and is not attachable. Stop it first."
+        fi
+        if [ -n "${CLAUDE_PROMPT:-}" ]; then
+            die "Container '$container_name' is already running. Stop it first, or run --attach."
+        fi
+        info "Container '$container_name' is already running. Attaching..."
+        exec docker exec -it "$container_name" /bin/zsh -l
+    fi
 
     # Remove stopped container with same name if it exists
-    docker rm "$container_name" 2>/dev/null || true
+    if [ "$existing_state" = "exited" ] || [ "$existing_state" = "created" ]; then
+        docker rm "$container_name" 2>/dev/null || true
+    fi
 
     local docker_args=(
         "run" "-d"
@@ -458,6 +494,10 @@ launch_container() {
     fi
 
     [ "$NO_PUSH" = "true" ] && docker_args+=("-e" "NO_PUSH=true")
+    if [ "$PERSIST_REPO" = "true" ]; then
+        docker_args+=("-e" "PERSIST_REPO=true")
+        docker_args+=("-v" "${repo_volume}:/home/claude/repo")
+    fi
 
     docker_args+=("$IMAGE_NAME")
 
@@ -471,6 +511,7 @@ launch_container() {
     [ -n "${CLAUDE_MODEL:-}" ] && info "  Model:  $CLAUDE_MODEL"
     [ -n "${CLAUDE_PROMPT:-}" ] && info "  Prompt: $CLAUDE_PROMPT"
     [ "$NO_PUSH" = "true" ] && info "  Mode:   NO PUSH (autonomous, commits local only)"
+    [ "$PERSIST_REPO" = "true" ] && info "  Mode:   PERSISTENT repo volume (${repo_volume})"
     info "════════════════════════════════════════"
     echo ""
 
@@ -492,8 +533,8 @@ launch_container() {
             exit 1
         fi
 
-        # Check if setup is done (sleep infinity is running = repo cloned, ready)
-        if docker exec "$cid" test -d /home/claude/repo 2>/dev/null; then
+        # Check if setup is done (entrypoint writes readiness sentinel)
+        if docker exec "$cid" test -f /tmp/claude-ready 2>/dev/null; then
             break
         fi
 
@@ -527,12 +568,18 @@ main() {
     check_prerequisites
     ensure_gh_auth
 
-    # Check for existing containers before repo selection
-    check_existing_containers
+    if [ "$ATTACH_MODE" = "true" ]; then
+        check_existing_containers
+        exit 0
+    fi
 
+    maybe_attach_existing_containers
     select_repo
     ensure_api_key
-    GH_TOKEN=$(gh auth token)
+    if [ -z "${GH_TOKEN:-}" ]; then
+        [ "$GH_AVAILABLE" = "true" ] || die "GH_TOKEN is required when gh is unavailable."
+        GH_TOKEN=$(gh auth token)
+    fi
     build_image "$FORCE_REBUILD"
     launch_container
 }

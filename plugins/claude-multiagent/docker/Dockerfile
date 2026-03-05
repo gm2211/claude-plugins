@@ -32,7 +32,7 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 RUN git clone https://github.com/gm2211/claude-plugins.git /plugin-src \
     && cd /plugin-src \
-    && git submodule update --init --recursive || true
+    && git submodule update --init --recursive
 
 # ---------------------------------------------------------------------------
 # 3. Build the plugin cache directory structure

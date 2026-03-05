@@ -45,3 +45,15 @@ plugins/claude-multiagent/
   that open automatically on session start and close on session end.
 - **Sequential IDs** — `bd-create-with-seq-id.sh` assigns human-friendly
   `<prefix>-<N>` IDs (e.g. `plug-42`) instead of random hashes.
+
+## Beads DB Scope
+
+Dashboard beads panes use a configurable database scope via
+`CLAUDE_MULTIAGENT_BEADS_DB_MODE`:
+
+- `worktree` (default): use `bd` auto-discovery in the worktree directory
+  (legacy explicit `.beads-worktree/dolt` is still supported)
+- `shared` (or `repo`): shared DB at `<repo>/.beads/dolt`
+
+Optional explicit override:
+- `CLAUDE_MULTIAGENT_BEADS_DB_PATH=/absolute/path/to/dolt`

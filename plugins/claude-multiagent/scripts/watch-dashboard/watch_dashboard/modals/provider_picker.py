@@ -74,6 +74,12 @@ class ProviderPicker(ModalScreen[str | None]):
             with Horizontal(id="picker-buttons"):
                 yield Button("Cancel", id="picker-cancel-btn")
 
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#picker-options", OptionList).focus()
+        except Exception:
+            pass
+
     @on(OptionList.OptionSelected)
     def _on_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(str(event.option.id))

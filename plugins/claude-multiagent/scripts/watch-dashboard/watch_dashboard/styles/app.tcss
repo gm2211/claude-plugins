@@ -112,7 +112,7 @@ DataTable > .datatable--cursor {
 }
 
 DataTable > .datatable--hover {
-    background: #282840;
+    background: #1e1e2e;
 }
 
 DataTable > .datatable--even-row {

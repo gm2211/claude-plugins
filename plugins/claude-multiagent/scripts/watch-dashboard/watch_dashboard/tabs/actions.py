@@ -22,6 +22,14 @@ _log = logging.getLogger("watch-dashboard")
 
 MAX_RUNS = 15
 
+
+# Textual DataTable hover events can render badly under some terminals/multiplexers
+# (ghost header rows on mouse movement). Keep list navigation keyboard-only.
+class _KeyboardOnlyDataTable(DataTable):
+    def _on_mouse_move(self, event) -> None:  # type: ignore[override]
+        event.stop()
+
+
 # ---------------------------------------------------------------------------
 # Commit color palette — same commit SHA gets same color
 # ---------------------------------------------------------------------------
@@ -216,11 +224,18 @@ class ActionsTab(Vertical):
         return tab_cfg.get("repo") or None
 
     def compose(self) -> ComposeResult:
-        yield DataTable(id="actions-table", cursor_type="row", zebra_stripes=True)
+        yield _KeyboardOnlyDataTable(
+            id="actions-table",
+            cursor_type="row",
+            zebra_stripes=True,
+            show_row_labels=False,
+            header_height=1,
+        )
         yield Static("", id="actions-status")
 
     def on_mount(self) -> None:
         table = self.query_one("#actions-table", DataTable)
+        table.mouse_hover = False
         table.add_columns("Workflow", "Branch", "Status", "Conclusion", "Started", "Duration", "Commit")
         self._refresh_data()
 
