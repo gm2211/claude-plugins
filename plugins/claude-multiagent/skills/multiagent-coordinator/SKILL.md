@@ -262,6 +262,12 @@ Multiple coordinators on the same repo are safe without locking. Each runs in it
 - **Capacity limits:** Never have more active agents than the agreed max concurrency. Queue new tickets rather than over-dispatching.
 - **Idle agents:** After every merge, check `bd ready` — if work exists and capacity allows, immediately assign the next ticket.
 
+### Worker Lifecycle
+
+- **After merge, reassign or shut down.** When a worker's task is merged, run `bd ready`. If there's work: reassign via `SendMessage`. If not: let the worker exit — do NOT keep it alive waiting for future tickets.
+- **Don't hoard workers.** Each idle worker holds a subprocess and its full conversation context in memory. Shut idle workers down. Spawning a new one when work arrives is cheap.
+- **Session wrap-up.** Before shipping the session, verify all workers have exited. Don't leave orphan subprocesses.
+
 ## Merging & Cleanup
 
 First, resolve repo root (needed for all merge and cleanup commands):
