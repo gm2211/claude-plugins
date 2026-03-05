@@ -72,7 +72,7 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 
 ## Sub-Agents
 
-- **Optional:** Create team per session via `TeamCreate` for `SendMessage`-based course corrections. Not required for status updates (agents write `bd comments add` directly).
+- **Create team per session:** Call `TeamCreate` before your first dispatch. Required for `SendMessage` course corrections (redirecting agents, unblocking, assigning new work). Status updates use `bd comments add` directly and don't depend on the team, but course corrections do.
 - Spawn via `Task` with `team_name`, `name`, type `general-purpose`, and a model chosen by task complexity:
   - **Haiku** (`haiku`): trivial/mechanical tasks — filing issues, finding files, reading/summarizing content, simple searches
   - **Sonnet** (`sonnet`): well-scoped implementation with clear acceptance criteria — editing specific files, writing a provider script, fixing a known bug
