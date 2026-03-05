@@ -72,7 +72,7 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 
 ## Sub-Agents
 
-- Create team per session: `TeamCreate`
+- **Optional:** Create team per session via `TeamCreate` for `SendMessage`-based course corrections. Not required for status updates (agents write `bd comments add` directly).
 - Spawn via `Task` with `team_name`, `name`, type `general-purpose`, and a model chosen by task complexity:
   - **Haiku** (`haiku`): trivial/mechanical tasks — filing issues, finding files, reading/summarizing content, simple searches
   - **Sonnet** (`sonnet`): well-scoped implementation with clear acceptance criteria — editing specific files, writing a provider script, fixing a known bug
@@ -220,39 +220,23 @@ bd ticket ID, acceptance criteria, repo path, worktree conventions, test/build c
 
 > **Reporting — mandatory.**
 >
-> Your FIRST status update must happen at startup (within 60s).
-> Then every 60s, send a status relay message to the coordinator using `SendMessage`.
+> Every 60s, post a progress comment to your ticket.
+> **You MUST include `--author <YOUR_AGENT_NAME>`** so comments show your name, not the repo owner's.
 >
-> Relay format:
-> ```text
-> STATUS_UPDATE <TICKET_ID>
-> [<step>/<total>] <activity>
+> ```bash
+> bd comments add <TICKET_ID> --author "<YOUR_AGENT_NAME>" "[<step>/<total>] <activity>
 > Done: <completed since last update>
 > Doing: <current work>
 > Blockers: <blockers or none>
 > ETA: <estimate>
-> Files: <modified files>
-> ```
->
-> Coordinator is responsible for writing bead comments from `STATUS_UPDATE` messages.
-> Do not skip the relay even if direct bd writes work.
->
-> Optional best-effort direct write:
-> ```bash
-> bd comments add <TICKET_ID> --author "<YOUR_AGENT_NAME>" "<same status body>" || true
+> Files: <modified files>"
 > ```
 >
 > Replace `<YOUR_AGENT_NAME>` with the `name` you were given at dispatch (e.g. `worker-1`).
 >
-> If stuck >3 min, say so in Blockers. Final update: summary, files modified, test results.
+> If stuck >3 min, say so in Blockers. Final comment: summary, files modified, test results.
 
-When coordinator receives `STATUS_UPDATE <TICKET_ID> ...` from an agent, mirror it into beads immediately using the same body:
-
-```bash
-bd comments add <TICKET_ID> --author "<agent-name>" "<same update body>"
-```
-
-If mirror write fails, retry once. If it still fails, tell the user immediately and include the raw status update in the message.
+**NOTE:** When using `prepare-agent.sh`, the `AGENT_REPORTING_BLOCK` variable contains a pre-formatted version of these instructions with agent name and ticket ID already substituted. Always paste `AGENT_REPORTING_BLOCK` verbatim into the agent prompt.
 
 ## Visual Verification for UI Tasks
 
@@ -278,7 +262,7 @@ If mirror write fails, retry once. If it still fails, tell the user immediately 
 ## Workload Management
 
 - **Track status:** Maintain a mental map of `<agent-name> → <ticket-id>` for every active agent.
-- **First-update SLA:** Every dispatch must produce first `STATUS_UPDATE` within 90 seconds.
+- **First-update SLA:** Every dispatch must produce a first `bd comments add` within 90 seconds.
   - If missing at 90s: send `SendMessage` ping, "Status update overdue for <ticket-id>. Report blockers now."
   - If still missing after 3 minutes: mark as blocked in your notes, notify user, and reassign ticket if needed.
 - **Auto-assign on completion:** When an agent sends a completion message:
@@ -286,7 +270,7 @@ If mirror write fails, retry once. If it still fails, tell the user immediately 
   2. Take the highest-priority result
   3. `bd update <id> --status in_progress --assignee=<agent-name>`
   4. `SendMessage` to the agent with the new ticket details
-- **Stuck detection:** If no `STATUS_UPDATE` for >5 min, send a check-in via `SendMessage`: "Any blockers on `<ticket-id>`?"
+- **Stuck detection:** If no bd comment for >5 min, send a check-in via `SendMessage`: "Any blockers on `<ticket-id>`?"
 - **Capacity limits:** Never have more active agents than the agreed max concurrency. Queue new tickets rather than over-dispatching.
 - **Idle agents:** After every merge, check `bd ready` — if work exists and capacity allows, immediately assign the next ticket.
 
