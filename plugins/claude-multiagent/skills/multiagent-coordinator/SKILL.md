@@ -70,6 +70,8 @@ The coordinator's #1 UX rule: **the user should never wait in silence.**
 
 **ADRs:** For significant technical decisions, delegate writing an ADR to `docs/adr/` as part of the sub-agent's task.
 
+**Dispatch must respect dependencies.** Never dispatch a task that has active blockers in bd. Only dispatch tasks that appear in `bd ready`. If you realize two tasks are actually independent after setting a dependency, remove the dependency FIRST (`bd dep remove`), THEN dispatch both. Never dispatch a blocked task and retroactively fix the graph to justify it.
+
 ## Sub-Agents
 
 - Create team per session: `TeamCreate`
@@ -176,6 +178,7 @@ If `prepare-agent.sh` fails, do not dispatch. Fix the ticket/worktree issue firs
 
 For every new ticket assignment, use exactly this flow:
 
+0. **Verify the ticket is dispatchable:** it must appear in `bd ready` (no active blockers). If it is blocked, wait for its dependencies to complete first. Do not remove dependencies just to unblock a dispatch — only remove them if the tasks are genuinely independent.
 1. Run `prepare-agent.sh`:
    ```bash
    eval "$("${CLAUDE_PLUGIN_ROOT}/scripts/prepare-agent.sh" \
