@@ -481,6 +481,16 @@ _find_multiagent_script() {
   return 1
 }
 
+# Locate any file (by relative path) inside the claude-multiagent plugin directory.
+# More general than _find_multiagent_script — accepts e.g. "docker/launch.sh".
+_find_multiagent_file() {
+  local relpath="$1" match
+  for match in ~/.claude/plugins/marketplaces/*/plugins/claude-multiagent/"$relpath"; do
+    [[ -x "$match" ]] && echo "$match" && return 0
+  done
+  return 1
+}
+
 # Open dashboard panes (if available) then launch claude.
 # Pane script is idempotent — safe to call on every launch.
 _claude_launch() {
@@ -615,4 +625,17 @@ claude() {
   fi
 
   _claude_launch "$@"
+}
+
+# clauded() — Launch Claude inside a Docker container.
+#
+# Finds the Docker launch script from the claude-multiagent plugin and
+# passes all arguments through to it.
+clauded() {
+  local _launcher
+  _launcher="$(_find_multiagent_file "docker/launch.sh" 2>/dev/null)" || {
+    printf 'ERROR: docker/launch.sh not found in claude-multiagent plugin.\n' >&2
+    return 1
+  }
+  "$_launcher" "$@"
 }
