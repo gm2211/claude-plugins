@@ -211,13 +211,24 @@ wt() {
       local choice=""
       if [ "$_tty_available" -eq 1 ] && command -v fzf >/dev/null 2>&1; then
         # fzf mode: pipe worktree names, let user arrow-select
+        local _delete_action="[delete] Delete a worktree..."
         local selected
-        selected=$(printf '%s\n' "${session_worktrees[@]}" | fzf --height=~50% --reverse --prompt="Select worktree: " --header="Arrow keys to navigate, Enter to select, Esc to cancel" 2>/dev/null)
+        selected=$(
+          {
+            printf '%s\n' "$_delete_action"
+            printf '%s\n' "${session_worktrees[@]}"
+          } | fzf --height=~50% --reverse --prompt="Select worktree: " --header="Arrow keys to navigate, Enter to select, Esc to cancel" 2>/dev/null
+        )
         local fzf_exit=$?
         if [ $fzf_exit -ne 0 ] || [ -z "$selected" ]; then
           _wt_msg "No worktree selected."
           trap - INT
           return 1
+        fi
+        if [ "$selected" = "$_delete_action" ]; then
+          trap - INT
+          wt delete
+          return $?
         fi
         choice="$selected"
       elif [ "$_tty_available" -eq 1 ]; then
@@ -230,10 +241,20 @@ wt() {
           _wt_msg "  ${_i}) ${_wt}"
         done
         _wt_msg ""
+        _wt_msg "  d) Delete a worktree..."
+        _wt_msg ""
 
         local selection
-        printf "Select a worktree [1-${#session_worktrees[@]}]: " >&2
+        printf "Select a worktree [1-${#session_worktrees[@]}, d]: " >&2
         read -r selection </dev/tty
+
+        case "$selection" in
+          d|D|delete|DELETE)
+            trap - INT
+            wt delete
+            return $?
+            ;;
+        esac
 
         if echo "$selection" | grep -qE '^[0-9]+$' && [ "$selection" -ge 1 ] && [ "$selection" -le ${#session_worktrees[@]} ]; then
           # Portable: walk array to find the Nth element
