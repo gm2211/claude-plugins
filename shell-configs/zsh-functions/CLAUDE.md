@@ -48,3 +48,4 @@ To update to the latest version of the functions:
 | `wt new`   | Worktree creator subcommand. Offers a date-based session name (`session-YYYY-MM-DD`, with `-N` suffix for duplicates) or accepts a custom name. Creates the worktree and cd's into it. |
 | `wt delete [name]` | Worktree remover subcommand. Deletes a worktree under `.worktrees/` (interactive picker if `name` is omitted). Asks for confirmation before delete. |
 | `claude`   | Wraps `wt`/`wt new` for Claude Code. On the default branch, tries `wt` (selector) first; if that fails (no worktrees), falls back to `wt new` (creator); then launches Claude inside the chosen worktree. `claude --skip` / `claude -s` bypasses worktree checks and disables claude-multiagent hooks for that launch. |
+| `clauded`  | Launches Claude inside a Docker container via the `claude-multiagent` plugin's `docker/launch.sh`. Passes all arguments through to the launch script. |
