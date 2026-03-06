@@ -229,14 +229,15 @@ do_tab_rename() {
     fi
 
     # Switch to our tab, rename it, then restore focus.
-    # go-to-tab-name will fail silently if the tab doesn't have the expected name
-    # (e.g., trying to remove prefix when it was never added) — that's fine.
-    zellij action go-to-tab-name "$current_name" 2>/dev/null || true
-    zellij action rename-tab "$new_name" 2>/dev/null || true
+    # If go-to-tab-name fails (tab doesn't exist with that name), skip the
+    # rename entirely to avoid renaming whichever tab happens to be focused.
+    if zellij action go-to-tab-name "$current_name" 2>/dev/null; then
+        zellij action rename-tab "$new_name" 2>/dev/null || true
 
-    # Restore focus to the previously focused tab (if different)
-    if [ -n "$focused_tab" ] && [ "$focused_tab" != "$current_name" ]; then
-        zellij action go-to-tab-name "$focused_tab" 2>/dev/null || true
+        # Restore focus to the previously focused tab (if different)
+        if [ -n "$focused_tab" ] && [ "$focused_tab" != "$current_name" ]; then
+            zellij action go-to-tab-name "$focused_tab" 2>/dev/null || true
+        fi
     fi
 }
 
