@@ -481,6 +481,17 @@ launch_container() {
         "--memory=4g"
         "--cpus=2"
         "--tmpfs" "/tmp:rw,noexec,nosuid,size=512m"
+        # Security hardening
+        "--cap-drop=ALL"
+        "--security-opt=no-new-privileges"
+        "--pids-limit=256"
+        # NOTE: --read-only is intentionally omitted. The container's entrypoint
+        # writes to numerous paths at runtime (git config in $HOME, .claude/
+        # settings, repo clone, node_modules, npm cache, etc.). Enumerating all
+        # writable paths as tmpfs/volume mounts is fragile and breaks when
+        # Claude Code or npm update their internal paths. The container already
+        # runs with --cap-drop=ALL and --security-opt=no-new-privileges, which
+        # prevent privilege escalation even with a writable filesystem.
     )
 
     # Optional env vars
