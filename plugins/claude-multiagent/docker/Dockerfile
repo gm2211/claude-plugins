@@ -104,10 +104,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
         zsh \
         unzip \
-        wget \
-        sudo \
         locales \
-        xclip \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -242,6 +239,12 @@ RUN chmod +x /entrypoint.sh
 
 # Fix ownership of all home directory contents
 RUN chown -R claude:claude /home/claude
+
+# ---------------------------------------------------------------------------
+# Healthcheck — verify the entrypoint finished setup (sentinel written by entrypoint.sh)
+# ---------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD test -f /tmp/claude-ready || exit 1
 
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
