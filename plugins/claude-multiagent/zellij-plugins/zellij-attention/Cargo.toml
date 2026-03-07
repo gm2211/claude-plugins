@@ -1,0 +1,24 @@
+[package]
+name = "zellij-attention"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Zellij plugin for tab attention notifications"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "zellij-attention"
+path = "src/main.rs"
+
+[dependencies]
+zellij-tile = "0.43.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
