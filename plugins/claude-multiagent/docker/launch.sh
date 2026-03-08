@@ -11,6 +11,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 IMAGE_NAME="claude-multiagent"
 
+# ── Terminal detection ────────────────────────────────────────
+# Determine the right TERM to pass into Docker containers.
+# When running inside Zellij with support_kitty_keyboard_protocol, the outer
+# Zellij forwards Kitty Keyboard Protocol (KKP) sequences through its PTY, but
+# overrides TERM to xterm-256color for panes.  Programs inside Docker need
+# TERM=xterm-kitty so they know KKP is available; otherwise keys like backspace
+# are mis-interpreted (the classic "backspace inserts spaces" bug in nested
+# Zellij).
+_docker_term() {
+    # If the host TERM is already xterm-kitty, keep it.
+    if [[ "${TERM:-}" == xterm-kitty ]]; then
+        echo "xterm-kitty"
+        return
+    fi
+
+    # Inside a Zellij session the ZELLIJ env var is always set.  Our Zellij
+    # config enables support_kitty_keyboard_protocol, so KKP is forwarded
+    # through the PTY — tell Docker about it.
+    if [[ -n "${ZELLIJ:-}" ]]; then
+        echo "xterm-kitty"
+        return
+    fi
+
+    # Fallback: pass through host TERM (or a sensible default).
+    echo "${TERM:-xterm-256color}"
+}
+
 # ── Color helpers ─────────────────────────────────────────────
 
 info()    { printf "\033[1;34m[INFO]\033[0m  %b\n" "$*"; }
@@ -241,7 +268,7 @@ attach_to_container() {
     fi
 
     info "Attaching to container..."
-    exec docker exec -it -e "TERM=${TERM:-xterm-256color}" "$cid" /bin/zsh -l
+    exec docker exec -it -e "TERM=$(_docker_term)" "$cid" /bin/zsh -l
 }
 
 _tty_available() {
@@ -947,7 +974,7 @@ launch_container() {
             die "Container '$container_name' is already running. Stop it first, or run --attach."
         fi
         info "Container '$container_name' is already running. Attaching..."
-        exec docker exec -it -e "TERM=${TERM:-xterm-256color}" "$container_name" /bin/zsh -l
+        exec docker exec -it -e "TERM=$(_docker_term)" "$container_name" /bin/zsh -l
     fi
 
     # Remove stopped container with same name if it exists
@@ -1053,7 +1080,7 @@ launch_container() {
     info "Attaching shell — exit to detach (container keeps running)"
     info "Reattach later: ./plugins/claude-multiagent/docker/launch.sh --attach"
     echo ""
-    exec docker exec -it -e "TERM=${TERM:-xterm-256color}" "$cid" /bin/zsh -l
+    exec docker exec -it -e "TERM=$(_docker_term)" "$cid" /bin/zsh -l
 }
 
 # ── Main ──────────────────────────────────────────────────────
