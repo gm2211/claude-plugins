@@ -978,6 +978,7 @@ launch_container() {
 
     # Optional env vars
     [ -n "${ANTHROPIC_API_KEY:-}" ] && docker_args+=("-e" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+    [ -n "${RENDER_API_KEY:-}" ] && docker_args+=("-e" "RENDER_API_KEY=$RENDER_API_KEY")
     [ -n "${REPO_BRANCH:-}" ] && docker_args+=("-e" "REPO_BRANCH=$REPO_BRANCH")
     [ -n "${CLAUDE_MODEL:-}" ] && docker_args+=("-e" "CLAUDE_MODEL=$CLAUDE_MODEL")
     [ -n "${MAX_BUDGET_USD:-}" ] && docker_args+=("-e" "MAX_BUDGET_USD=$MAX_BUDGET_USD")
