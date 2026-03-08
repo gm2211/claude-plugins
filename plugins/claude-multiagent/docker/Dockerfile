@@ -108,6 +108,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         zsh \
         unzip \
         uuid-runtime \
+        postgresql-client \
         locales \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
