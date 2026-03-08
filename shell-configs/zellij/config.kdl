@@ -272,6 +272,8 @@ web_client {
     font "monospace"
 }
 
+default_shell "/bin/zsh"
+
 copy_command "pbcopy"
 
 copy_on_select true

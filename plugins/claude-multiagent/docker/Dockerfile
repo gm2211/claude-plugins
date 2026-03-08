@@ -178,9 +178,12 @@ COPY shell-configs/zsh-functions/ /home/claude/.config/zsh/
 COPY shell-configs/claude-status-line/ /home/claude/.config/claude-status-line/
 
 # ---------------------------------------------------------------------------
-# No-op pbcopy wrapper (Zellij config references pbcopy; no X11 in container)
+# pbcopy wrapper using OSC 52 escape sequence for clipboard passthrough.
+# Zellij pipes copied text to this; the escape sequence flows through
+# Docker → outer Zellij → kitty → system clipboard.
 # ---------------------------------------------------------------------------
-RUN printf '#!/bin/sh\ncat > /dev/null\n' > /usr/local/bin/pbcopy \
+RUN printf '#!/bin/sh\ndata=$(base64 | tr -d '"'"'\\n'"'"')\nprintf '"'"'\\033]52;c;%%s\\a'"'"' "$data"\n' \
+      > /usr/local/bin/pbcopy \
     && chmod +x /usr/local/bin/pbcopy
 
 # ---------------------------------------------------------------------------
@@ -249,6 +252,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
+ENV SHELL=/bin/zsh
 ENV PATH="/home/claude/.local/bin:${PATH}"
 
 USER claude
