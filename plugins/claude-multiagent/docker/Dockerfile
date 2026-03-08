@@ -273,6 +273,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
+ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
 ENV PATH="/home/claude/.local/bin:${PATH}"
 
