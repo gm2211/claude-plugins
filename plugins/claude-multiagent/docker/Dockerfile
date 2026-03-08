@@ -141,6 +141,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN npm install -g @anthropic-ai/claude-code
 
 # ---------------------------------------------------------------------------
+# Dolt (required by bd/beads issue tracker)
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
+
+# ---------------------------------------------------------------------------
 # Zellij (latest release, multi-arch)
 # ---------------------------------------------------------------------------
 RUN set -eux; \
