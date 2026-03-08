@@ -225,6 +225,9 @@ alias l='ls -CF'
 alias cc='claude --dangerously-skip-permissions'
 alias vi='nvim'
 alias vim='nvim'
+alias nv='nvim'
+alias cl='claude --dangerously-skip-permissions'
+alias cls='claude --dangerously-skip-permissions -s'
 
 # Source custom functions
 [ -f ~/.config/zsh/functions.zsh ] && source ~/.config/zsh/functions.zsh
