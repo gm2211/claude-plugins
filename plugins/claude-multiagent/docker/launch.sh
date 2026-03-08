@@ -28,6 +28,7 @@ REPO_BRANCH=""
 CLAUDE_MODEL=""
 MAX_BUDGET_USD=""
 ATTACH_MODE="false"
+DELETE_MODE="false"
 NO_PUSH="false"
 GH_AVAILABLE="false"
 PERSIST_REPO="false"
@@ -40,7 +41,8 @@ Launch a sandboxed Claude Code instance in Docker for a specific repo.
 
 Options:
   --rebuild     Force rebuild the Docker image
-  --attach      List running containers and attach to one
+  --attach      List running containers and attach to one (interactive TUI)
+  --delete      Open interactive TUI focused on container deletion
   --no-push     Autonomous mode: commits local only, no git push
   --persistent  Reuse a per-repo Docker volume instead of fresh clone
   --prompt CMD  Run non-interactively with this prompt
@@ -53,6 +55,7 @@ Examples:
   launch.sh                          # Interactive wizard
   launch.sh owner/repo               # Quick launch for a specific repo
   launch.sh --attach                 # Attach to a running container
+  launch.sh --delete                 # Delete containers interactively
   launch.sh --prompt "fix tests" owner/repo  # Non-interactive
 USAGE
 }
@@ -66,6 +69,10 @@ parse_args() {
                 ;;
             --attach)
                 ATTACH_MODE="true"
+                shift
+                ;;
+            --delete)
+                DELETE_MODE="true"
                 shift
                 ;;
             --no-push)
@@ -251,9 +258,290 @@ repo_volume_name() {
     printf 'claude-repo-%s' "$slug"
 }
 
+# ── Interactive Container Picker TUI ──────────────────────────
+
+interactive_container_picker() {
+    # Usage: interactive_container_picker <rows> <allow_new> [<initial_action>]
+    #   rows         - tab-delimited container rows from container_rows()
+    #   allow_new    - "true" to show the "n: new" option
+    #   initial_action - optional: "delete" to highlight delete on first render
+    # Returns:
+    #   0 if a container was attached (exec replaces process)
+    #   1 if user chose "new" (only when allow_new=true)
+    #   2 if user quit/cancelled
+
+    local rows="$1"
+    local allow_new="${2:-false}"
+    local initial_action="${3:-}"
+
+    # Parse rows into arrays
+    local -a cids=() names=() repos=() statuses=()
+    while IFS=$'\t' read -r cid name repo status; do
+        [ -z "$cid" ] && continue
+        cids+=("$cid")
+        names+=("$name")
+        repos+=("$repo")
+        statuses+=("$status")
+    done <<< "$rows"
+
+    local total=${#cids[@]}
+    if [ "$total" -eq 0 ]; then
+        return 2
+    fi
+
+    local selected=0
+    local message=""
+    local message_color=""
+    local confirm_delete=""  # index being confirmed for deletion, or empty
+    local need_redraw="true"
+
+    # ANSI color codes
+    local c_reset="\033[0m"
+    local c_bold="\033[1m"
+    local c_blue="\033[1;34m"
+    local c_green="\033[1;32m"
+    local c_yellow="\033[1;33m"
+    local c_red="\033[1;31m"
+    local c_cyan="\033[1;36m"
+    local c_dim="\033[2m"
+    local c_reverse="\033[7m"
+
+    # Check tput availability for cursor control
+    local has_tput="false"
+    command -v tput >/dev/null 2>&1 && has_tput="true"
+
+    _tui_clear_screen() {
+        if [ "$has_tput" = "true" ]; then
+            tput clear 2>/dev/null || printf '\033[2J\033[H'
+        else
+            printf '\033[2J\033[H'
+        fi
+    }
+
+    _tui_hide_cursor() {
+        if [ "$has_tput" = "true" ]; then
+            tput civis 2>/dev/null || printf '\033[?25l'
+        else
+            printf '\033[?25l'
+        fi
+    }
+
+    _tui_show_cursor() {
+        if [ "$has_tput" = "true" ]; then
+            tput cnorm 2>/dev/null || printf '\033[?25h'
+        else
+            printf '\033[?25h'
+        fi
+    }
+
+    _tui_cleanup() {
+        _tui_show_cursor
+        # Restore terminal settings if stty was modified
+        if [ -n "${_tui_old_stty:-}" ]; then
+            stty "$_tui_old_stty" 2>/dev/null </dev/tty || true
+        fi
+    }
+
+    # Save terminal state and set up cleanup
+    local _tui_old_stty=""
+    _tui_old_stty=$(stty -g </dev/tty 2>/dev/null || true)
+    trap '_tui_cleanup' EXIT INT TERM
+
+    _tui_hide_cursor
+
+    _tui_render() {
+        _tui_clear_screen
+
+        # Header
+        printf "${c_blue}${c_bold}  Claude Multi-Agent — Container Manager${c_reset}\n"
+        printf "${c_dim}  ────────────────────────────────────────────────────────────────${c_reset}\n"
+        printf "\n"
+
+        # Column headers
+        printf "  ${c_dim}%-22s  %-30s  %s${c_reset}\n" "NAME" "REPO" "STATUS"
+        printf "  ${c_dim}%-22s  %-30s  %s${c_reset}\n" "──────────────────────" "──────────────────────────────" "────────────────"
+
+        # Container list
+        local i
+        for ((i = 0; i < total; i++)); do
+            local prefix="  "
+            local name_display="${names[$i]}"
+            local repo_display="${repos[$i]}"
+            local status_display="${statuses[$i]}"
+
+            # Truncate long fields
+            [ ${#name_display} -gt 22 ] && name_display="${name_display:0:19}..."
+            [ ${#repo_display} -gt 30 ] && repo_display="${repo_display:0:27}..."
+
+            if [ "$i" -eq "$selected" ]; then
+                if [ "$confirm_delete" = "$i" ]; then
+                    # Highlighted + pending delete confirmation
+                    printf "${c_red}${c_reverse}${c_bold}> %-22s  %-30s  %s${c_reset}\n" "$name_display" "$repo_display" "$status_display"
+                else
+                    printf "${c_cyan}${c_reverse}${c_bold}> %-22s  %-30s  %s${c_reset}\n" "$name_display" "$repo_display" "$status_display"
+                fi
+            else
+                printf "  %-22s  %-30s  %s\n" "$name_display" "$repo_display" "$status_display"
+            fi
+        done
+
+        printf "\n"
+
+        # Status / message line
+        if [ -n "$confirm_delete" ]; then
+            printf "  ${c_red}${c_bold}Delete '${names[$confirm_delete]}'? Press d/x again to confirm, any other key to cancel${c_reset}\n"
+        elif [ -n "$message" ]; then
+            printf "  ${message_color}${message}${c_reset}\n"
+        else
+            printf "\n"
+        fi
+
+        printf "\n"
+
+        # Help bar
+        local help_line="  ${c_dim}↑↓/jk: navigate  │  Enter/a: attach  │  d/x: delete"
+        if [ "$allow_new" = "true" ]; then
+            help_line="${help_line}  │  n: new"
+        fi
+        help_line="${help_line}  │  q/Esc: quit${c_reset}"
+        printf "%b\n" "$help_line"
+    }
+
+    # Initial render
+    _tui_render
+
+    # Main input loop
+    while true; do
+        local key=""
+        # Read a single character from /dev/tty in raw mode
+        IFS= read -rsn1 key </dev/tty 2>/dev/null || true
+
+        # Handle escape sequences (arrow keys)
+        if [ "$key" = $'\x1b' ]; then
+            local seq1="" seq2=""
+            IFS= read -rsn1 -t 0.1 seq1 </dev/tty 2>/dev/null || true
+            if [ "$seq1" = "[" ]; then
+                IFS= read -rsn1 -t 0.1 seq2 </dev/tty 2>/dev/null || true
+                case "$seq2" in
+                    A) key="UP" ;;    # Up arrow
+                    B) key="DOWN" ;;  # Down arrow
+                    *) key="ESC" ;;   # Other escape sequence
+                esac
+            else
+                key="ESC"  # Plain Escape
+            fi
+        fi
+
+        # If we're in delete confirmation mode, handle it specially
+        if [ -n "$confirm_delete" ]; then
+            if [ "$key" = "d" ] || [ "$key" = "x" ]; then
+                # Confirmed: delete the container
+                local del_cid="${cids[$confirm_delete]}"
+                local del_name="${names[$confirm_delete]}"
+                message="Deleting '${del_name}'..."
+                message_color="$c_yellow"
+                confirm_delete=""
+                _tui_render
+
+                docker stop "$del_cid" 2>/dev/null || true
+                docker rm "$del_cid" 2>/dev/null || true
+
+                # Remove from arrays
+                local -a new_cids=() new_names=() new_repos=() new_statuses=()
+                local idx
+                for ((idx = 0; idx < total; idx++)); do
+                    if [ "$idx" -ne "$selected" ]; then
+                        new_cids+=("${cids[$idx]}")
+                        new_names+=("${names[$idx]}")
+                        new_repos+=("${repos[$idx]}")
+                        new_statuses+=("${statuses[$idx]}")
+                    fi
+                done
+                cids=("${new_cids[@]+"${new_cids[@]}"}")
+                names=("${new_names[@]+"${new_names[@]}"}")
+                repos=("${new_repos[@]+"${new_repos[@]}"}")
+                statuses=("${new_statuses[@]+"${new_statuses[@]}"}")
+                total=${#cids[@]}
+
+                if [ "$total" -eq 0 ]; then
+                    _tui_cleanup
+                    trap - EXIT INT TERM
+                    success "Container '${del_name}' deleted. No containers remaining."
+                    return 2
+                fi
+
+                # Adjust selection index
+                if [ "$selected" -ge "$total" ]; then
+                    selected=$((total - 1))
+                fi
+
+                message="Deleted '${del_name}'"
+                message_color="$c_green"
+                _tui_render
+                continue
+            else
+                # Cancelled
+                confirm_delete=""
+                message="Delete cancelled"
+                message_color="$c_dim"
+                _tui_render
+                continue
+            fi
+        fi
+
+        # Normal mode key handling
+        case "$key" in
+            UP|k)
+                if [ "$selected" -gt 0 ]; then
+                    ((selected--))
+                fi
+                message=""
+                _tui_render
+                ;;
+            DOWN|j)
+                if [ "$selected" -lt $((total - 1)) ]; then
+                    ((selected++))
+                fi
+                message=""
+                _tui_render
+                ;;
+            ""|a)  # Enter key reads as empty string; 'a' for attach
+                _tui_cleanup
+                trap - EXIT INT TERM
+                attach_to_container "${cids[$selected]}"
+                return 0  # attach_to_container does exec, but just in case
+                ;;
+            d|x)
+                confirm_delete="$selected"
+                _tui_render
+                ;;
+            n)
+                if [ "$allow_new" = "true" ]; then
+                    _tui_cleanup
+                    trap - EXIT INT TERM
+                    return 1
+                fi
+                # In attach-only mode, 'n' does nothing
+                message="New container not available in this mode"
+                message_color="$c_dim"
+                _tui_render
+                ;;
+            q|ESC)
+                _tui_cleanup
+                trap - EXIT INT TERM
+                return 2
+                ;;
+            *)
+                # Ignore unknown keys
+                ;;
+        esac
+    done
+}
+
 select_container_and_attach() {
     local rows="$1"
     local allow_new="${2:-false}"
+    local initial_action="${3:-}"
     if _use_fzf; then
         local selected
         selected=$(printf '%s\n' "$rows" | fzf --height=~50% --reverse \
@@ -271,26 +559,16 @@ select_container_and_attach() {
     fi
 
     if _tty_available; then
-        local -a ids=()
-        while IFS=$'\t' read -r cid _name _repo _status; do
-            ids+=("$cid")
-        done <<< "$rows"
-
-        local choice=""
-        if [ "$allow_new" = "true" ]; then
-            printf "  Enter container number to attach, or n for new: "
-        else
-            printf "  Enter container number to attach: "
-        fi
-        read -r choice </dev/tty
-        if [ "$allow_new" = "true" ] && { [ -z "$choice" ] || [ "$choice" = "n" ] || [ "$choice" = "N" ]; }; then
-            return 1
-        fi
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#ids[@]}" ]; then
-            attach_to_container "${ids[$((choice-1))]}"
-        else
-            die "Invalid selection: $choice"
-        fi
+        local picker_result=0
+        interactive_container_picker "$rows" "$allow_new" "$initial_action" || picker_result=$?
+        case $picker_result in
+            0) return 0 ;;  # Attached (exec replaces process)
+            1) return 1 ;;  # User chose "new"
+            2)              # User quit
+                [ "$allow_new" = "true" ] && return 1
+                die "No container selected."
+                ;;
+        esac
         return 0
     fi
 
@@ -300,14 +578,13 @@ select_container_and_attach() {
 }
 
 check_existing_containers() {
+    local initial_action="${1:-}"
     local rows
     if ! rows="$(container_rows)"; then
         die "No containers found. Launch a new one without --attach."
     fi
 
-    print_container_table "$rows"
-    echo ""
-    select_container_and_attach "$rows" "false"
+    select_container_and_attach "$rows" "false" "$initial_action"
 }
 
 maybe_attach_existing_containers() {
@@ -315,9 +592,6 @@ maybe_attach_existing_containers() {
     rows="$(container_rows 2>/dev/null || true)"
     [ -n "$rows" ] || return 0
 
-    print_container_table "$rows"
-    echo ""
-    info "Select a container to attach, or cancel to start a new launch."
     if select_container_and_attach "$rows" "true"; then
         return 0
     fi
@@ -621,6 +895,11 @@ main() {
     parse_args "$@"
     check_prerequisites
     ensure_gh_auth
+
+    if [ "$DELETE_MODE" = "true" ]; then
+        check_existing_containers "delete"
+        exit 0
+    fi
 
     if [ "$ATTACH_MODE" = "true" ]; then
         check_existing_containers
