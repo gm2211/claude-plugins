@@ -24,10 +24,22 @@ MAX_RUNS = 15
 
 
 # Textual DataTable hover events can render badly under some terminals/multiplexers
-# (ghost header rows on mouse movement). Keep list navigation keyboard-only.
+# (ghost header rows on mouse movement). Suppress all mouse-related rendering.
 class _KeyboardOnlyDataTable(DataTable):
     def _on_mouse_move(self, event) -> None:  # type: ignore[override]
         event.stop()
+        event.prevent_default()
+
+    def _on_mouse_down(self, event) -> None:  # type: ignore[override]
+        event.stop()
+        event.prevent_default()
+
+    def _on_mouse_up(self, event) -> None:  # type: ignore[override]
+        event.stop()
+        event.prevent_default()
+
+    def watch_hover_coordinate(self, old, value) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------

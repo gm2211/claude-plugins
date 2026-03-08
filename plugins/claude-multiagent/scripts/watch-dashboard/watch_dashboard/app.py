@@ -10,6 +10,7 @@ import subprocess
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.events import MouseMove, MouseDown, MouseUp
 from textual.widgets import DataTable, Footer, Header, TabbedContent, TabPane
 from textual import on
 
@@ -74,6 +75,20 @@ class WatchDashboardApp(App):
                 with TabPane("Actions", id="actions-pane"):
                     yield ActionsTab(project_dir=self._project_dir)
         yield Footer()
+
+    # Suppress all mouse events — Textual's mouse tracking causes rendering
+    # artifacts (ghost headers, flickering) in terminal multiplexers like Zellij.
+    def on_mouse_move(self, event: MouseMove) -> None:
+        event.stop()
+        event.prevent_default()
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        event.stop()
+        event.prevent_default()
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        event.stop()
+        event.prevent_default()
 
     def on_mount(self) -> None:
         self._poll_timer = self.set_interval(
