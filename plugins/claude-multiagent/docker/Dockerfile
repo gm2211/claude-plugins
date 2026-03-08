@@ -139,7 +139,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # ---------------------------------------------------------------------------
 # Claude Code (global npm package)
 # ---------------------------------------------------------------------------
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code pg
 
 # ---------------------------------------------------------------------------
 # Dolt (required by bd/beads issue tracker)
