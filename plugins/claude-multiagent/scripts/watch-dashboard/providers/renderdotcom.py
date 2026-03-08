@@ -19,17 +19,22 @@ _log = logging.getLogger("deploy-watch-render")
 _log.setLevel(logging.DEBUG)
 _log.propagate = False
 if not _log.handlers:
-    _fh = logging.FileHandler("/tmp/deploy-watch-render.log")
-    _fh.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    ))
-    _log.addHandler(_fh)
+    import tempfile
+    _log_path = os.path.join(tempfile.gettempdir(), "deploy-watch-render.log")
+    try:
+        _fh = logging.FileHandler(_log_path)
+        _fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+        _log.addHandler(_fh)
+    except (PermissionError, OSError):
+        _log.addHandler(logging.NullHandler())
 
 try:
     import certifi
     SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
     _log.debug("SSL: using certifi (%s)", certifi.where())
-except ImportError:
+except (ImportError, AttributeError):
     SSL_CONTEXT = None
     _log.debug("SSL: certifi not available, SSL_CONTEXT=None")
 
