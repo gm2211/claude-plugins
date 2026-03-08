@@ -283,6 +283,15 @@ RUN mkdir -p /home/claude/.claude && \
 {
   "enabledPlugins": {
     "claude-multiagent@gm2211-plugins": true
+  },
+  "mcpServers": {
+    "render": {
+      "type": "http",
+      "url": "https://mcp.render.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${RENDER_API_KEY}"
+      }
+    }
   }
 }
 EOSETTINGS

@@ -171,16 +171,6 @@ if command -v bd &>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4b. Configure Render MCP server (if RENDER_API_KEY is set)
-# ---------------------------------------------------------------------------
-if [ -n "${RENDER_API_KEY:-}" ]; then
-    claude mcp add --transport http render https://mcp.render.com/mcp \
-        --header "Authorization: Bearer ${RENDER_API_KEY}" 2>/dev/null \
-        && log_success "Render MCP server configured" \
-        || log_warn "Failed to configure Render MCP server"
-fi
-
-# ---------------------------------------------------------------------------
 # 5. Write Claude project settings
 # ---------------------------------------------------------------------------
 mkdir -p /home/claude/repo/.claude
