@@ -173,6 +173,12 @@ RUN set -eux; \
     ln -sf /opt/nvim-linux-${NVIM_ARCH}/bin/nvim /usr/local/bin/nvim
 
 # ---------------------------------------------------------------------------
+# Kitty terminfo (needed when TERM=xterm-kitty is inherited from host)
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminfo/kitty.terminfo \
+        | tic -x -o /usr/share/terminfo -
+
+# ---------------------------------------------------------------------------
 # Starship prompt
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y

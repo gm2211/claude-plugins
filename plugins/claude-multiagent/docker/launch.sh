@@ -241,7 +241,7 @@ attach_to_container() {
     fi
 
     info "Attaching to container..."
-    exec docker exec -it "$cid" /bin/zsh -l
+    exec docker exec -it -e "TERM=${TERM:-xterm-256color}" "$cid" /bin/zsh -l
 }
 
 _tty_available() {
@@ -947,7 +947,7 @@ launch_container() {
             die "Container '$container_name' is already running. Stop it first, or run --attach."
         fi
         info "Container '$container_name' is already running. Attaching..."
-        exec docker exec -it "$container_name" /bin/zsh -l
+        exec docker exec -it -e "TERM=${TERM:-xterm-256color}" "$container_name" /bin/zsh -l
     fi
 
     # Remove stopped container with same name if it exists
@@ -1053,7 +1053,7 @@ launch_container() {
     info "Attaching shell — exit to detach (container keeps running)"
     info "Reattach later: ./plugins/claude-multiagent/docker/launch.sh --attach"
     echo ""
-    exec docker exec -it "$cid" /bin/zsh -l
+    exec docker exec -it -e "TERM=${TERM:-xterm-256color}" "$cid" /bin/zsh -l
 }
 
 # ── Main ──────────────────────────────────────────────────────
