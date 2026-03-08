@@ -957,6 +957,7 @@ launch_container() {
 
     local docker_args=(
         "run" "-d"
+        "--init"  # tini as PID 1 — reaps zombie processes and forwards signals
         "--name" "$container_name"
         "-e" "GH_TOKEN=$GH_TOKEN"
         "-e" "REPO=$REPO"
