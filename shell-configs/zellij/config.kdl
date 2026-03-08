@@ -267,6 +267,7 @@ load_plugins {
     "https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm" {
         hide_frame_for_single_pane "false"
     }
+    "file:~/.config/zellij/plugins/zellij-attention.wasm"
 }
 web_client {
     font "monospace"

@@ -205,7 +205,13 @@ RUN mkdir -p /home/claude/.config/zellij/plugins \
          /home/claude/.config/zellij/layouts/default.kdl \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/claude/.config/zellij/plugins/zjframes.wasm|g' \
          /home/claude/.config/zellij/config.kdl \
-    && sed -i '/^copy_command/d' /home/claude/.config/zellij/config.kdl
+    && sed -i '/^copy_command/d' /home/claude/.config/zellij/config.kdl \
+    && sed -i 's|file:~/.config/zellij/plugins/zellij-attention.wasm|file:/home/claude/.config/zellij/plugins/zellij-attention.wasm|g' \
+         /home/claude/.config/zellij/config.kdl
+
+# Install zellij-attention WASM plugin (tab attention notifications)
+COPY plugins/claude-multiagent/zellij-plugins/zellij-attention/dist/zellij-attention.wasm \
+     /home/claude/.config/zellij/plugins/zellij-attention.wasm
 
 COPY shell-configs/nvim/    /home/claude/.config/nvim/
 COPY shell-configs/zsh-functions/ /home/claude/.config/zsh/
