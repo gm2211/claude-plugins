@@ -427,6 +427,47 @@ ensure_api_key() {
     fi
 }
 
+# ── Step 5b: Auto-rebuild Detection ──────────────────────────
+
+compute_source_hash() {
+    find "$REPO_ROOT/plugins/claude-multiagent/docker/Dockerfile" \
+         "$REPO_ROOT/plugins/claude-multiagent/docker/entrypoint.sh" \
+         "$REPO_ROOT/shell-configs/" \
+         -type f -print0 \
+        | sort -z \
+        | xargs -0 shasum -a 256 \
+        | shasum -a 256 \
+        | cut -c1-12
+}
+
+check_image_freshness() {
+    # Skip if the image doesn't exist yet (build_image will handle it)
+    docker image inspect "$IMAGE_NAME" &>/dev/null || return 0
+
+    local image_hash current_hash
+    image_hash=$(docker inspect --format '{{index .Config.Labels "source_hash"}}' "$IMAGE_NAME" 2>/dev/null || true)
+    current_hash=$(compute_source_hash)
+
+    if [ "$image_hash" = "$current_hash" ] && [ -n "$image_hash" ]; then
+        return 0
+    fi
+
+    warn "Docker image is out of date (image: ${image_hash:-none}, current: ${current_hash})"
+
+    if _tty_available; then
+        read -rp "Rebuild now? [Y/n] " answer </dev/tty
+    else
+        # Non-interactive: default to rebuild
+        answer=""
+    fi
+
+    if [ -z "$answer" ] || [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+        FORCE_REBUILD="true"
+    else
+        info "Continuing with stale image. Run 'clauded --rebuild' to update."
+    fi
+}
+
 # ── Step 6: Build Image ──────────────────────────────────────
 
 build_image() {
@@ -434,7 +475,9 @@ build_image() {
 
     if [ "$force" = "true" ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
         info "Building Docker image..."
-        docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT"
+        docker build -t "$IMAGE_NAME" \
+            --build-arg SOURCE_HASH="$(compute_source_hash)" \
+            -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT"
         success "Image built successfully"
     else
         info "Using existing image (use --rebuild to force)"
@@ -590,6 +633,9 @@ main() {
     if [ -z "${GH_TOKEN:-}" ]; then
         [ "$GH_AVAILABLE" = "true" ] || die "GH_TOKEN is required when gh is unavailable."
         GH_TOKEN=$(gh auth token)
+    fi
+    if [ "$FORCE_REBUILD" != "true" ]; then
+        check_image_freshness
     fi
     build_image "$FORCE_REBUILD"
     launch_container

@@ -88,6 +88,7 @@ BUILDER_SCRIPT
 FROM ubuntu:24.04 AS runtime
 
 ARG TARGETARCH
+ARG SOURCE_HASH=unknown
 
 SHELL ["/bin/bash", "-c"]
 
@@ -254,6 +255,8 @@ ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
 ENV SHELL=/bin/zsh
 ENV PATH="/home/claude/.local/bin:${PATH}"
+
+LABEL source_hash="${SOURCE_HASH}"
 
 USER claude
 WORKDIR /home/claude
