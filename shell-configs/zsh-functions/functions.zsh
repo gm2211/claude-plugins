@@ -506,7 +506,7 @@ _find_multiagent_script() {
 # More general than _find_multiagent_script — accepts e.g. "docker/launch.sh".
 _find_multiagent_file() {
   local relpath="$1" match
-  for match in ~/.claude/plugins/marketplaces/*/plugins/claude-multiagent/"$relpath"; do
+  for match in ~/projects/claude-plugins/plugins/claude-multiagent/"$relpath"; do
     [[ -x "$match" ]] && echo "$match" && return 0
   done
   return 1

@@ -275,13 +275,15 @@ if [ -n "${MAX_BUDGET_USD:-}" ]; then
     CLAUDE_ARGS+=("--max-cost-dollars" "$MAX_BUDGET_USD")
 fi
 
-# Create the `cc` wrapper so every shell session gets the right flags
+# Create the `cl` wrapper so every shell session gets the right flags
+# NOTE: Do NOT name this `cc` — it shadows the system C compiler (/usr/bin/cc)
+# which breaks nvim-treesitter parser compilation.
 mkdir -p /home/claude/.local/bin
-cat > /home/claude/.local/bin/cc << WRAPPER
+cat > /home/claude/.local/bin/cl << WRAPPER
 #!/usr/bin/env bash
 exec claude ${CLAUDE_ARGS[*]} "\$@"
 WRAPPER
-chmod +x /home/claude/.local/bin/cc
+chmod +x /home/claude/.local/bin/cl
 
 # ---------------------------------------------------------------------------
 # Non-interactive mode (CLAUDE_PROMPT is set) — run and exit

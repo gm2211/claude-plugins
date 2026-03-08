@@ -100,9 +100,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         git \
         jq \
-        gcc \
-        make \
-        libc6-dev \
+        build-essential \
+        ruby \
         python3 \
         python3-pip \
         python3-venv \
@@ -111,6 +110,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         locales \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# colorls (colorized ls with icons)
+# ---------------------------------------------------------------------------
+RUN gem install colorls --no-document
 
 # ---------------------------------------------------------------------------
 # Node.js 22 LTS (via NodeSource)
@@ -226,12 +230,10 @@ export VISUAL=nvim
 alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
-alias cc='claude --dangerously-skip-permissions'
 alias vi='nvim'
 alias vim='nvim'
 alias nv='nvim'
-alias cl='claude --dangerously-skip-permissions'
-alias cls='claude --dangerously-skip-permissions -s'
+alias cls='cl -s'
 alias ga='git add'
 alias gc='git commit'
 alias gcm='git commit -m'
@@ -265,6 +267,18 @@ RUN set -eux; \
     if [ -f "${BEADS_TUI_DIR}/pyproject.toml" ]; then \
         "${VENV_DIR}/bin/pip" install --no-cache-dir "${BEADS_TUI_DIR}"; \
     fi
+
+# ---------------------------------------------------------------------------
+# Enable the claude-multiagent plugin in user-level settings
+# ---------------------------------------------------------------------------
+RUN mkdir -p /home/claude/.claude && \
+    cat > /home/claude/.claude/settings.json <<'EOSETTINGS'
+{
+  "enabledPlugins": {
+    "claude-multiagent@gm2211-plugins": true
+  }
+}
+EOSETTINGS
 
 # ---------------------------------------------------------------------------
 # Entrypoint & final setup
