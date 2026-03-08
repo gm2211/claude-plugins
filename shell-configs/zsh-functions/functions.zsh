@@ -548,7 +548,7 @@ _claude_launch() {
 
 claude() {
   #############################################################################
-  # --skip / -s flag: bypass worktree check entirely
+  # --skip / -s flag: bypass worktree check and disable multiagent plugin
   #############################################################################
 
   local _claude_args=()
@@ -561,7 +561,7 @@ claude() {
   done
 
   if [ "$_skip_worktree" -eq 1 ]; then
-    _claude_launch "${_claude_args[@]}"
+    CLAUDE_MULTIAGENT_DISABLE=1 _claude_launch "${_claude_args[@]}"
     return $?
   fi
 
