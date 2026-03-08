@@ -2,11 +2,30 @@
 # Sourced from claude-plugins/shell-configs/zsh-functions/
 
 function ss() {
-    local f="/tmp/ss-${RANDOM}${RANDOM}.png"
-    pngpaste "$f" && {
-      echo -n "$f" | pbcopy
-      echo "Saved & copied: $f"
-    }
+    local dir="/tmp/claude-screenshots"
+    mkdir -p "$dir"
+    local f="${dir}/ss-$(date +%s)-${RANDOM}.png"
+
+    if command -v pngpaste &>/dev/null; then
+        # macOS: grab from pasteboard, copy path to clipboard
+        pngpaste "$f" && {
+            echo -n "$f" | pbcopy
+            echo "Saved & copied: $f"
+        }
+    elif [ -d "$dir" ] && ls "$dir"/ss-*.png &>/dev/null 2>&1; then
+        # Docker/Linux: pick the newest screenshot from the shared mount
+        f="$(ls -t "$dir"/ss-*.png 2>/dev/null | head -1)"
+        if [ -n "$f" ]; then
+            echo "$f"
+        else
+            echo "No screenshots found in $dir" >&2
+            return 1
+        fi
+    else
+        echo "No screenshot tool available and no screenshots in $dir" >&2
+        echo "Take a screenshot on the host first (ss), then retry here." >&2
+        return 1
+    fi
 }
 
 # wt() — Interactive worktree selector/creator/remover.

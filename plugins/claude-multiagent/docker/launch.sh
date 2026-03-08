@@ -955,6 +955,9 @@ launch_container() {
         docker rm "$container_name" 2>/dev/null || true
     fi
 
+    # Ensure screenshot exchange dir exists (avoid Docker creating it as root)
+    mkdir -p /tmp/claude-screenshots
+
     local docker_args=(
         "run" "-d"
         "--init"  # tini as PID 1 — reaps zombie processes and forwards signals
@@ -964,6 +967,7 @@ launch_container() {
         "--memory=4g"
         "--cpus=2"
         "--tmpfs" "/tmp:rw,noexec,nosuid,size=512m"
+        "-v" "/tmp/claude-screenshots:/tmp/claude-screenshots"
         # Security hardening
         "--cap-drop=ALL"
         "--security-opt=no-new-privileges"
