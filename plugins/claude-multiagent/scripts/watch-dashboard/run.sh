@@ -7,8 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WATCH_DASHBOARD_DIR="${SCRIPT_DIR}/watch_dashboard"
 
 # Find a Python with textual installed.
-# Prefer plugin-managed venv, then known local interpreters.
-_venv="${BEADS_TUI_VENV:-${SCRIPT_DIR}/../.beads-tui-venv}"
+# Prefer plugin-managed venv (multiple search paths), then system interpreters.
 PYTHON=""
 
 _python_has_textual() {
@@ -16,9 +15,29 @@ _python_has_textual() {
     "$py" -c "import textual" >/dev/null 2>&1
 }
 
-if [[ -x "${_venv}/bin/python3" ]] && _python_has_textual "${_venv}/bin/python3"; then
-    PYTHON="${_venv}/bin/python3"
-else
+# Search order for the managed venv:
+# 1. BEADS_TUI_VENV env var (set by session-start.sh)
+# 2. Sibling .beads-tui-venv (same scripts/ dir as this file)
+# 3. Walk up to find plugin cache venvs (handles marketplace installs)
+_venv_candidates=(
+    "${BEADS_TUI_VENV:-}"
+    "${SCRIPT_DIR}/../.beads-tui-venv"
+)
+# Search plugin cache paths (marketplace installs)
+for _cache_venv in "${HOME}"/.claude/plugins/cache/*/claude-multiagent/*/scripts/.beads-tui-venv; do
+    [[ -d "$_cache_venv" ]] && _venv_candidates+=("$_cache_venv")
+done
+
+for _venv in "${_venv_candidates[@]}"; do
+    [[ -z "$_venv" ]] && continue
+    if [[ -x "${_venv}/bin/python3" ]] && _python_has_textual "${_venv}/bin/python3"; then
+        PYTHON="${_venv}/bin/python3"
+        break
+    fi
+done
+
+# Fallback: system python with textual
+if [[ -z "$PYTHON" ]]; then
     for candidate in python3.13 python3.12 python3.11 python3; do
         if command -v "$candidate" &>/dev/null && _python_has_textual "$candidate"; then
             PYTHON="$candidate"
