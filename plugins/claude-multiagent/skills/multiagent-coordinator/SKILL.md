@@ -93,7 +93,56 @@ Use `bd blocked` to see what's waiting, `bd dep tree` to visualize the graph.
 
 **New project (bd list empty):** Recommend planning phase — milestones → bd tickets. Proceed if user declines.
 
-**ADRs:** For significant technical decisions, delegate writing an ADR to `docs/adr/` as part of the sub-agent's task.
+**ADRs:** See the dedicated ADR section below for when and how to require them.
+
+## Architectural Decision Records (ADRs)
+
+The coordinator must judge whether a task warrants an ADR and, if so, include the ADR requirement in the agent's prompt. ADRs live in `docs/adr/` in the target repo, using the [MADR 4.0](https://adr.github.io/madr/) format. A template is bundled at `${CLAUDE_PLUGIN_ROOT}/templates/adr-template.md`.
+
+### When to Require an ADR
+
+Require an ADR when the task involves **any** of:
+
+- Introducing a new technology, framework, or major dependency
+- Changing the architecture or system boundaries (new services, new data stores, new protocols)
+- Making a choice between multiple viable approaches where the trade-offs are non-obvious
+- Deprecating or removing a significant component
+- Changing a convention that affects the whole codebase (e.g., error handling strategy, API style)
+
+Do **not** require an ADR for:
+
+- Bug fixes, typo fixes, or small refactors
+- Adding a feature using an already-established pattern
+- Dependency version bumps
+- Configuration changes
+
+When in doubt, lean toward requiring one — a lightweight ADR is cheap and helps future contributors.
+
+### Naming Convention
+
+ADR files are numbered sequentially: `docs/adr/NNNN-short-slug.md` (e.g., `docs/adr/0001-use-postgres-for-events.md`). The agent must check the existing highest number in `docs/adr/` and increment by one.
+
+### ADR Prompt Block (for agent dispatch)
+
+When the coordinator determines a task needs an ADR, append this block to the agent prompt:
+
+  ```
+  ## ADR Required
+
+  This task involves a significant architectural decision. You MUST produce an ADR before
+  marking the task complete.
+
+  1. Check existing ADRs in `docs/adr/` and determine the next sequence number (NNNN)
+  2. Copy the template from `${CLAUDE_PLUGIN_ROOT}/templates/adr-template.md`
+  3. Write the ADR at `docs/adr/NNNN-<short-slug>.md` with:
+     - status: proposed
+     - date: today
+     - At minimum: Context, Decision Drivers, Considered Options, Decision Outcome
+  4. Commit the ADR alongside the implementation code
+
+  The ADR should capture WHY you chose this approach over the alternatives,
+  not just describe what you built.
+  ```
 
 ## Dispatch
 
