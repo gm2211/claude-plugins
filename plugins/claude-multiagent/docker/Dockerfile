@@ -100,6 +100,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         git \
         jq \
+        gcc \
+        make \
+        libc6-dev \
         python3 \
         python3-pip \
         python3-venv \
@@ -184,7 +187,8 @@ RUN mkdir -p /home/claude/.config/zellij/plugins \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm|file:/home/claude/.config/zellij/plugins/zjstatus.wasm|g' \
          /home/claude/.config/zellij/layouts/default.kdl \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/claude/.config/zellij/plugins/zjframes.wasm|g' \
-         /home/claude/.config/zellij/config.kdl
+         /home/claude/.config/zellij/config.kdl \
+    && sed -i '/^copy_command/d' /home/claude/.config/zellij/config.kdl
 
 COPY shell-configs/nvim/    /home/claude/.config/nvim/
 COPY shell-configs/zsh-functions/ /home/claude/.config/zsh/
@@ -228,6 +232,13 @@ alias vim='nvim'
 alias nv='nvim'
 alias cl='claude --dangerously-skip-permissions'
 alias cls='claude --dangerously-skip-permissions -s'
+alias ga='git add'
+alias gc='git commit'
+alias gcm='git commit -m'
+alias gs='git status'
+alias gco='git checkout'
+alias gp='git push'
+alias gpu='git push -u'
 
 # Source custom functions
 [ -f ~/.config/zsh/functions.zsh ] && source ~/.config/zsh/functions.zsh
