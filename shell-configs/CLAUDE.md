@@ -73,7 +73,6 @@ kill -SIGUSR1 $(pgrep kitty) 2>/dev/null
 | `Cmd+h` | Focus pane left |
 | `Cmd+j` | Focus pane down |
 | `Cmd+k` | Focus pane up |
-| `Cmd+l` | Focus pane right |
 
 ### Zellij modes (Cmd = Super)
 
@@ -85,6 +84,7 @@ kill -SIGUSR1 $(pgrep kitty) 2>/dev/null
 | `Cmd+g` | Move mode (move panes around) |
 | `Cmd+s` | Scroll mode |
 | `Cmd+y` | Session mode |
+| `Cmd+l` | Locked mode (pass keys to inner session) |
 | `Cmd+q` | Quit zellij |
 | `Cmd+c` | Copy |
 

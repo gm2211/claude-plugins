@@ -1,6 +1,6 @@
 keybinds clear-defaults=true {
     locked {
-        // Lock mode disabled — Super g repurposed for Move mode
+        bind "Super l" { SwitchToMode "normal"; }
     }
     pane {
         bind "left" { MoveFocus "left"; }
@@ -149,7 +149,7 @@ keybinds clear-defaults=true {
         bind "Super h" { MoveFocus "left"; }
         bind "Super j" { MoveFocus "down"; }
         bind "Super k" { MoveFocus "up"; }
-        bind "Super l" { MoveFocus "right"; }
+        bind "Super l" { SwitchToMode "locked"; }
         bind "Alt h" { MoveFocusOrTab "left"; }
         bind "Alt i" { MoveTab "left"; }
         bind "Alt j" { MoveFocus "down"; }
