@@ -174,6 +174,18 @@ RUN if id -u 1000 &>/dev/null; then userdel -r "$(id -nu 1000)" 2>/dev/null || t
 # Copy shell configs from build context
 # ---------------------------------------------------------------------------
 COPY shell-configs/zellij/  /home/claude/.config/zellij/
+
+# Pre-download zjstatus/zjframes WASM plugins and rewrite configs to use local files
+RUN mkdir -p /home/claude/.config/zellij/plugins \
+    && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm" \
+         -o /home/claude/.config/zellij/plugins/zjstatus.wasm \
+    && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm" \
+         -o /home/claude/.config/zellij/plugins/zjframes.wasm \
+    && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm|file:/home/claude/.config/zellij/plugins/zjstatus.wasm|g' \
+         /home/claude/.config/zellij/layouts/default.kdl \
+    && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/claude/.config/zellij/plugins/zjframes.wasm|g' \
+         /home/claude/.config/zellij/config.kdl
+
 COPY shell-configs/nvim/    /home/claude/.config/nvim/
 COPY shell-configs/zsh-functions/ /home/claude/.config/zsh/
 COPY shell-configs/claude-status-line/ /home/claude/.config/claude-status-line/
@@ -191,6 +203,11 @@ RUN printf '#!/bin/sh\ndata=$(base64 | tr -d '"'"'\\n'"'"')\nprintf '"'"'\\033]5
 # Zsh configuration
 # ---------------------------------------------------------------------------
 RUN cat > /home/claude/.zshrc <<'EOZSH'
+# Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
+if [[ -z "$ZELLIJ" ]] && [[ $- == *i* ]] && command -v zellij &>/dev/null; then
+    exec zellij
+fi
+
 # Starship prompt
 eval "$(starship init zsh)"
 
