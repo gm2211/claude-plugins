@@ -966,7 +966,7 @@ launch_container() {
         # Security hardening
         "--cap-drop=ALL"
         "--security-opt=no-new-privileges"
-        "--pids-limit=256"
+        "--pids-limit=1024"
         # NOTE: --read-only is intentionally omitted. The container's entrypoint
         # writes to numerous paths at runtime (git config in $HOME, .claude/
         # settings, repo clone, node_modules, npm cache, etc.). Enumerating all
