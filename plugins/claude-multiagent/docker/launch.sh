@@ -538,6 +538,185 @@ interactive_container_picker() {
     done
 }
 
+interactive_repo_picker() {
+    # Usage: interactive_repo_picker <newline-delimited repo list>
+    # Sets global REPO to the selected repository.
+    # Returns:
+    #   0 if a repo was selected (REPO is set)
+    #   1 if user quit/cancelled
+
+    local repo_list="$1"
+
+    # Parse repos into array
+    local -a repo_items=()
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        repo_items+=("$line")
+    done <<< "$repo_list"
+
+    local total=${#repo_items[@]}
+    if [ "$total" -eq 0 ]; then
+        return 1
+    fi
+
+    local selected=0
+    local message=""
+    local message_color=""
+
+    # ANSI color codes
+    local c_reset="\033[0m"
+    local c_bold="\033[1m"
+    local c_blue="\033[1;34m"
+    local c_cyan="\033[1;36m"
+    local c_dim="\033[2m"
+    local c_reverse="\033[7m"
+
+    # Check tput availability for cursor control
+    local has_tput="false"
+    command -v tput >/dev/null 2>&1 && has_tput="true"
+
+    _rp_clear_screen() {
+        if [ "$has_tput" = "true" ]; then
+            tput clear 2>/dev/null || printf '\033[2J\033[H'
+        else
+            printf '\033[2J\033[H'
+        fi
+    }
+
+    _rp_hide_cursor() {
+        if [ "$has_tput" = "true" ]; then
+            tput civis 2>/dev/null || printf '\033[?25l'
+        else
+            printf '\033[?25l'
+        fi
+    }
+
+    _rp_show_cursor() {
+        if [ "$has_tput" = "true" ]; then
+            tput cnorm 2>/dev/null || printf '\033[?25h'
+        else
+            printf '\033[?25h'
+        fi
+    }
+
+    _rp_cleanup() {
+        _rp_show_cursor
+        if [ -n "${_rp_old_stty:-}" ]; then
+            stty "$_rp_old_stty" 2>/dev/null </dev/tty || true
+        fi
+    }
+
+    # Save terminal state and set up cleanup
+    local _rp_old_stty=""
+    _rp_old_stty=$(stty -g </dev/tty 2>/dev/null || true)
+    trap '_rp_cleanup' EXIT INT TERM
+
+    _rp_hide_cursor
+
+    _rp_render() {
+        _rp_clear_screen
+
+        # Header
+        printf "${c_blue}${c_bold}  Claude Multi-Agent — Repository Picker${c_reset}\n"
+        printf "${c_dim}  ────────────────────────────────────────────────────────────────${c_reset}\n"
+        printf "\n"
+
+        # Repo list
+        local i
+        for ((i = 0; i < total; i++)); do
+            if [ "$i" -eq "$selected" ]; then
+                printf "${c_cyan}${c_reverse}${c_bold}> %s${c_reset}\n" "${repo_items[$i]}"
+            else
+                printf "  %s\n" "${repo_items[$i]}"
+            fi
+        done
+
+        printf "\n"
+
+        # Message line
+        if [ -n "$message" ]; then
+            printf "  ${message_color}${message}${c_reset}\n"
+        else
+            printf "\n"
+        fi
+
+        printf "\n"
+
+        # Help bar
+        printf "  ${c_dim}↑↓/jk: navigate  │  Enter: select  │  /: type manually  │  q/Esc: quit${c_reset}\n"
+    }
+
+    # Initial render
+    _rp_render
+
+    # Main input loop
+    while true; do
+        local key=""
+        IFS= read -rsn1 key </dev/tty 2>/dev/null || true
+
+        # Handle escape sequences (arrow keys)
+        if [ "$key" = $'\x1b' ]; then
+            local seq1="" seq2=""
+            IFS= read -rsn1 -t 0.1 seq1 </dev/tty 2>/dev/null || true
+            if [ "$seq1" = "[" ]; then
+                IFS= read -rsn1 -t 0.1 seq2 </dev/tty 2>/dev/null || true
+                case "$seq2" in
+                    A) key="UP" ;;
+                    B) key="DOWN" ;;
+                    *) key="ESC" ;;
+                esac
+            else
+                key="ESC"
+            fi
+        fi
+
+        case "$key" in
+            UP|k)
+                if [ "$selected" -gt 0 ]; then
+                    ((selected--))
+                fi
+                message=""
+                _rp_render
+                ;;
+            DOWN|j)
+                if [ "$selected" -lt $((total - 1)) ]; then
+                    ((selected++))
+                fi
+                message=""
+                _rp_render
+                ;;
+            "")  # Enter key
+                REPO="${repo_items[$selected]}"
+                _rp_cleanup
+                trap - EXIT INT TERM
+                return 0
+                ;;
+            /|t)  # Type manually
+                _rp_show_cursor
+                if [ -n "${_rp_old_stty:-}" ]; then
+                    stty "$_rp_old_stty" 2>/dev/null </dev/tty || true
+                fi
+                _rp_clear_screen
+                printf "${c_blue}${c_bold}  Claude Multi-Agent — Repository Picker${c_reset}\n"
+                printf "${c_dim}  ────────────────────────────────────────────────────────────────${c_reset}\n"
+                printf "\n"
+                printf "  Enter repository (owner/repo): "
+                read -r REPO </dev/tty
+                trap - EXIT INT TERM
+                return 0
+                ;;
+            q|ESC)
+                _rp_cleanup
+                trap - EXIT INT TERM
+                return 1
+                ;;
+            *)
+                # Ignore unknown keys
+                ;;
+        esac
+    done
+}
+
 select_container_and_attach() {
     local rows="$1"
     local allow_new="${2:-false}"
@@ -640,22 +819,8 @@ select_repo() {
                 read -r REPO </dev/tty
             fi
         elif _tty_available; then
-            # Numbered list fallback
-            local i=1
-            for repo in "${repo_array[@]}"; do
-                printf "  %2d) %s\n" "$i" "$repo"
-                ((i++))
-            done
-            echo ""
-            printf "  Enter number, or type owner/repo: "
-            read -r selection </dev/tty
-
-            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#repo_array[@]}" ]; then
-                REPO="${repo_array[$((selection-1))]}"
-            elif [[ "$selection" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
-                REPO="$selection"
-            else
-                die "Invalid selection: $selection"
+            if ! interactive_repo_picker "$repos"; then
+                die "No repository selected"
             fi
         else
             # No TTY — cannot interactively select
