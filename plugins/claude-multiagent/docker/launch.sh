@@ -419,9 +419,9 @@ interactive_container_picker() {
         # Handle escape sequences (arrow keys)
         if [ "$key" = $'\x1b' ]; then
             local seq1="" seq2=""
-            IFS= read -rsn1 -t 0.1 seq1 </dev/tty 2>/dev/null || true
+            IFS= read -rsn1 -t 1 seq1 </dev/tty 2>/dev/null || true
             if [ "$seq1" = "[" ]; then
-                IFS= read -rsn1 -t 0.1 seq2 </dev/tty 2>/dev/null || true
+                IFS= read -rsn1 -t 1 seq2 </dev/tty 2>/dev/null || true
                 case "$seq2" in
                     A) key="UP" ;;    # Up arrow
                     B) key="DOWN" ;;  # Down arrow
@@ -657,9 +657,9 @@ interactive_repo_picker() {
         # Handle escape sequences (arrow keys)
         if [ "$key" = $'\x1b' ]; then
             local seq1="" seq2=""
-            IFS= read -rsn1 -t 0.1 seq1 </dev/tty 2>/dev/null || true
+            IFS= read -rsn1 -t 1 seq1 </dev/tty 2>/dev/null || true
             if [ "$seq1" = "[" ]; then
-                IFS= read -rsn1 -t 0.1 seq2 </dev/tty 2>/dev/null || true
+                IFS= read -rsn1 -t 1 seq2 </dev/tty 2>/dev/null || true
                 case "$seq2" in
                     A) key="UP" ;;
                     B) key="DOWN" ;;
