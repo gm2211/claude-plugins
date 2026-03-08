@@ -201,6 +201,10 @@ cat > /home/claude/repo/.claude/settings.local.json << 'SETTINGS'
   },
   "panes": {
     "dashboard": false
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
   }
 }
 SETTINGS
