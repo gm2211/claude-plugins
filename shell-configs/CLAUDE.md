@@ -43,13 +43,18 @@ brew install kitty zellij lazygit
 brew install --cask font-symbols-only-nerd-font font-meslo-lg-nerd-font font-fira-code
 
 # Create config directories
-mkdir -p ~/.config/kitty ~/.config/zellij/layouts ~/.config/nvim ~/.config/claude-status-line
+mkdir -p ~/.config/kitty ~/.config/zellij/layouts ~/.config/zellij/plugins ~/.config/nvim ~/.config/claude-status-line
 
 # Symlink configs (adjust REPO_DIR to your clone location)
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 ln -sf "$REPO_DIR/kitty/kitty.conf" ~/.config/kitty/kitty.conf
 ln -sf "$REPO_DIR/zellij/config.kdl" ~/.config/zellij/config.kdl
 ln -sf "$REPO_DIR/zellij/layouts/default.kdl" ~/.config/zellij/layouts/default.kdl
+
+# Zellij plugins (e.g. zellij-attention for tab notifications)
+for wasm in "$REPO_DIR"/zellij/plugins/*.wasm; do
+  [ -f "$wasm" ] && ln -sf "$wasm" ~/.config/zellij/plugins/
+done
 
 # Nvim config (symlink the whole directory's contents)
 for f in init.lua lua; do
