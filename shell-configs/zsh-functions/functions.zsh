@@ -521,15 +521,6 @@ _find_multiagent_script() {
   return 1
 }
 
-# Locate any file (by relative path) inside the claude-multiagent plugin directory.
-# More general than _find_multiagent_script — accepts e.g. "docker/launch.sh".
-_find_multiagent_file() {
-  local relpath="$1" match
-  for match in ~/projects/claude-plugins/plugins/claude-multiagent/"$relpath"; do
-    [[ -x "$match" ]] && echo "$match" && return 0
-  done
-  return 1
-}
 
 # Open dashboard panes (if available) then launch claude.
 # Pane script is idempotent — safe to call on every launch.
@@ -667,7 +658,9 @@ claude() {
   _claude_launch "$@"
 }
 
-# clauded() — Launch Claude inside a Docker sandbox.
+# clauded() — Launch Claude inside a Docker sandbox with custom dev environment.
+# Uses gm-claude-dev template (zellij, nvim, starship, zsh).
+# Build template: cd ~/projects/claude-plugins && docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
 clauded() {
-  docker sandbox run claude -- --dangerously-skip-permissions "$@"
+  docker sandbox run -t gm-claude-dev claude "$@"
 }
