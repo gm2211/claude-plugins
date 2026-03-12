@@ -21,9 +21,28 @@ return {
         number = true,
         spell = false,
         signcolumn = "yes",
-        wrap = false,
+        wrap = true,
+        linebreak = true, -- wrap at word boundaries, not mid-word
+        autoread = true, -- auto-reload files changed on disk
       },
       g = {},
+    },
+    autocmds = {
+      -- auto-reload files when they change on disk
+      auto_reload = {
+        {
+          event = { "FocusGained", "BufEnter", "CursorHold" },
+          desc = "Check for file changes and reload",
+          callback = function()
+            if vim.fn.getcmdwintype() == "" then vim.cmd("checktime") end
+          end,
+        },
+        {
+          event = "FileChangedShellPost",
+          desc = "Notify on file reload",
+          callback = function() vim.notify("File changed on disk. Reloaded.", vim.log.levels.INFO) end,
+        },
+      },
     },
     mappings = {
       n = {

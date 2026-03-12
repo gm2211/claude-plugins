@@ -1,6 +1,24 @@
 # Portable ZSH functions
 # Sourced from claude-plugins/shell-configs/zsh-functions/
 
+alias nv='nvim'
+
+# ZLE word-navigation bindings for Kitty + Zellij
+# Kitty sends Alt+Left/Right as CSI 1;3D/C; map those to word motion in Zsh.
+if [[ -o interactive ]]; then
+  bindkey '\e[1;3D' backward-word
+  bindkey '\e[1;3C' forward-word
+  bindkey '\eb' backward-word
+  bindkey '\ef' forward-word
+fi
+
+# Preserve terminal scrollback when running Codex inside zellij/kitty.
+if [[ $- == *i* ]]; then
+    codex() {
+        command /opt/homebrew/bin/codex --no-alt-screen "$@"
+    }
+fi
+
 function ss() {
     local dir="/tmp/claude-screenshots"
     mkdir -p "$dir"
