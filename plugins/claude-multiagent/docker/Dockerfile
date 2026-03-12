@@ -1,47 +1,27 @@
 # =============================================================================
-# Claude Code Dev Environment with claude-multiagent plugin
+# Custom Docker Sandbox Template — extends the official Claude Code base
 # =============================================================================
-# Build context: repo root (docker build -f plugins/claude-multiagent/docker/Dockerfile .)
-# Multi-arch: supports linux/amd64 and linux/arm64 via TARGETARCH
+# Build:  docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
+# Use:    docker sandbox run -t gm-claude-dev claude .
 # =============================================================================
 
 # =============================================================================
-# Stage 1: Builder — download binaries & prepare plugin cache
+# Stage 1: Builder — prepare claude-multiagent plugin cache
 # =============================================================================
 FROM ubuntu:24.04 AS builder
-
-SHELL ["/bin/bash", "-c"]
-
-ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git jq \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------------------------------------------------------------------------
-# 1. Download bd (beads) binary v0.56.1
-# ---------------------------------------------------------------------------
-RUN set -eux; \
-    curl -fsSL "https://github.com/steveyegge/beads/releases/download/v0.56.1/beads_0.56.1_linux_${TARGETARCH}.tar.gz" \
-        | tar xz -C /tmp; \
-    mv /tmp/bd /bd; \
-    chmod +x /bd
-
-# ---------------------------------------------------------------------------
-# 2. Clone the plugin marketplace repo & init submodules
-# ---------------------------------------------------------------------------
 RUN git clone https://github.com/gm2211/claude-plugins.git /plugin-src \
     && cd /plugin-src \
     && git submodule update --init --recursive
 
-# ---------------------------------------------------------------------------
-# 3. Build the plugin cache directory structure
-# ---------------------------------------------------------------------------
 RUN <<'BUILDER_SCRIPT'
 set -eux
 VERSION=$(jq -r '.plugins[] | select(.name=="claude-multiagent") | .version' \
           /plugin-src/.claude-plugin/marketplace.json)
-echo "Plugin version: ${VERSION}"
 
 CACHE_DIR="/plugin-cache/cache/gm2211-plugins/claude-multiagent/${VERSION}"
 mkdir -p "${CACHE_DIR}"
@@ -54,7 +34,7 @@ cat > /plugin-cache/installed_plugins.json <<EOJSON
     "claude-multiagent@gm2211-plugins": [
       {
         "scope": "user",
-        "installPath": "/home/claude/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}",
+        "installPath": "/home/agent/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}",
         "version": "${VERSION}",
         "installedAt": "2026-01-01T00:00:00.000Z",
         "lastUpdated": "2026-01-01T00:00:00.000Z",
@@ -72,7 +52,7 @@ cat > /plugin-cache/known_marketplaces.json <<EOJSON
       "source": "github",
       "repo": "gm2211/claude-plugins"
     },
-    "installLocation": "/home/claude/.claude/plugins/marketplaces/gm2211-plugins",
+    "installLocation": "/home/agent/.claude/plugins/marketplaces/gm2211-plugins",
     "lastUpdated": "2026-01-01T00:00:00.000Z"
   }
 }
@@ -81,31 +61,22 @@ EOJSON
 echo "${VERSION}" > /plugin-cache/.plugin-version
 BUILDER_SCRIPT
 
+# =============================================================================
+# Stage 2: Custom sandbox template
+# =============================================================================
+FROM docker/sandbox-templates:claude-code
 
-# =============================================================================
-# Stage 2: Runtime — full dev environment
-# =============================================================================
-FROM ubuntu:24.04 AS runtime
+USER root
 
 ARG TARGETARCH
-ARG SOURCE_HASH=unknown
-
-SHELL ["/bin/bash", "-c"]
 
 # ---------------------------------------------------------------------------
-# System packages + locale
+# System packages beyond the base image
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        git \
-        jq \
-        build-essential \
-        ruby ruby-dev \
-        python3 \
-        python3-pip \
-        python3-venv \
         zsh \
+        ruby ruby-dev \
+        build-essential \
         unzip \
         uuid-runtime \
         postgresql-client \
@@ -119,32 +90,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN gem install colorls --no-document
 
 # ---------------------------------------------------------------------------
-# Node.js 22 LTS (via NodeSource)
+# GitHub CLI (if not already in base)
 # ---------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---------------------------------------------------------------------------
-# GitHub CLI
-# ---------------------------------------------------------------------------
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        | tee /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y gh \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---------------------------------------------------------------------------
-# Claude Code (global npm package)
-# ---------------------------------------------------------------------------
-RUN npm install -g @anthropic-ai/claude-code pg
+RUN command -v gh >/dev/null 2>&1 || { \
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+        && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+        && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list \
+        && apt-get update && apt-get install -y gh \
+        && rm -rf /var/lib/apt/lists/*; \
+    }
 
 # ---------------------------------------------------------------------------
 # Dolt (required by bd/beads issue tracker)
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
+
+# ---------------------------------------------------------------------------
+# Beads (bd) binary
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    curl -fsSL "https://github.com/steveyegge/beads/releases/download/v0.56.1/beads_0.56.1_linux_${TARGETARCH}.tar.gz" \
+        | tar xz -C /tmp; \
+    mv /tmp/bd /usr/local/bin/bd; \
+    chmod +x /usr/local/bin/bd
 
 # ---------------------------------------------------------------------------
 # Zellij (latest release, multi-arch)
@@ -160,7 +130,7 @@ RUN set -eux; \
     chmod +x /usr/local/bin/zellij
 
 # ---------------------------------------------------------------------------
-# Neovim (stable v0.10.x tarball, multi-arch)
+# Neovim (stable v0.10.x, multi-arch)
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     case "${TARGETARCH}" in \
@@ -173,7 +143,7 @@ RUN set -eux; \
     ln -sf /opt/nvim-linux-${NVIM_ARCH}/bin/nvim /usr/local/bin/nvim
 
 # ---------------------------------------------------------------------------
-# Kitty terminfo (needed when TERM=xterm-kitty is inherited from host)
+# Kitty terminfo (for TERM=xterm-kitty from host)
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminfo/kitty.terminfo \
         | tic -x -o /usr/share/terminfo -
@@ -184,52 +154,43 @@ RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminf
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
 
 # ---------------------------------------------------------------------------
-# Create 'claude' user (uid 1000, zsh shell)
-# ---------------------------------------------------------------------------
-# Remove existing uid 1000 user if present (ubuntu:24.04 has 'ubuntu'), then create 'claude'
-RUN if id -u 1000 &>/dev/null; then userdel -r "$(id -nu 1000)" 2>/dev/null || true; fi \
-    && useradd -m -s /bin/zsh -u 1000 claude
-
-# ---------------------------------------------------------------------------
-# Copy shell configs from build context
-# ---------------------------------------------------------------------------
-COPY shell-configs/zellij/  /home/claude/.config/zellij/
-
-# Pre-download zjstatus/zjframes WASM plugins and rewrite configs to use local files
-RUN mkdir -p /home/claude/.config/zellij/plugins \
-    && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm" \
-         -o /home/claude/.config/zellij/plugins/zjstatus.wasm \
-    && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm" \
-         -o /home/claude/.config/zellij/plugins/zjframes.wasm \
-    && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm|file:/home/claude/.config/zellij/plugins/zjstatus.wasm|g' \
-         /home/claude/.config/zellij/layouts/default.kdl \
-    && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/claude/.config/zellij/plugins/zjframes.wasm|g' \
-         /home/claude/.config/zellij/config.kdl \
-    && sed -i '/^copy_command/d' /home/claude/.config/zellij/config.kdl \
-    && sed -i 's|file:~/.config/zellij/plugins/zellij-attention.wasm|file:/home/claude/.config/zellij/plugins/zellij-attention.wasm|g' \
-         /home/claude/.config/zellij/config.kdl
-
-# Install zellij-attention WASM plugin (tab attention notifications)
-COPY plugins/claude-multiagent/zellij-plugins/zellij-attention/dist/zellij-attention.wasm \
-     /home/claude/.config/zellij/plugins/zellij-attention.wasm
-
-COPY shell-configs/nvim/    /home/claude/.config/nvim/
-COPY shell-configs/zsh-functions/ /home/claude/.config/zsh/
-COPY shell-configs/claude-status-line/ /home/claude/.config/claude-status-line/
-
-# ---------------------------------------------------------------------------
-# pbcopy wrapper using OSC 52 escape sequence for clipboard passthrough.
-# Zellij pipes copied text to this; the escape sequence flows through
-# Docker → outer Zellij → kitty → system clipboard.
+# pbcopy wrapper (OSC 52 clipboard passthrough)
 # ---------------------------------------------------------------------------
 RUN printf '#!/bin/sh\ndata=$(base64 | tr -d '"'"'\\n'"'"')\nprintf '"'"'\\033]52;c;%%s\\a'"'"' "$data"\n' \
       > /usr/local/bin/pbcopy \
     && chmod +x /usr/local/bin/pbcopy
 
 # ---------------------------------------------------------------------------
+# Set zsh as default shell for agent user
+# ---------------------------------------------------------------------------
+RUN chsh -s /bin/zsh agent
+
+# ---------------------------------------------------------------------------
+# Shell configs — zellij, nvim, zsh, claude status line
+# ---------------------------------------------------------------------------
+COPY shell-configs/zellij/  /home/agent/.config/zellij/
+COPY shell-configs/nvim/    /home/agent/.config/nvim/
+COPY shell-configs/zsh-functions/ /home/agent/.config/zsh/
+COPY shell-configs/claude-status-line/ /home/agent/.config/claude-status-line/
+
+# Pre-download zjstatus/zjframes WASM plugins and rewrite configs to local paths
+RUN mkdir -p /home/agent/.config/zellij/plugins \
+    && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm" \
+         -o /home/agent/.config/zellij/plugins/zjstatus.wasm \
+    && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm" \
+         -o /home/agent/.config/zellij/plugins/zjframes.wasm \
+    && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm|file:/home/agent/.config/zellij/plugins/zjstatus.wasm|g' \
+         /home/agent/.config/zellij/layouts/default.kdl \
+    && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/agent/.config/zellij/plugins/zjframes.wasm|g' \
+         /home/agent/.config/zellij/config.kdl \
+    && sed -i '/^copy_command/d' /home/agent/.config/zellij/config.kdl \
+    && sed -i 's|file:~/.config/zellij/plugins/zellij-attention.wasm|file:/home/agent/.config/zellij/plugins/zellij-attention.wasm|g' \
+         /home/agent/.config/zellij/config.kdl
+
+# ---------------------------------------------------------------------------
 # Zsh configuration
 # ---------------------------------------------------------------------------
-RUN cat > /home/claude/.zshrc <<'EOZSH'
+RUN cat > /home/agent/.zshrc <<'EOZSH'
 # Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
 if [[ -z "$ZELLIJ" ]] && [[ $- == *i* ]] && command -v zellij &>/dev/null; then
     exec zellij
@@ -252,7 +213,6 @@ alias l='ls -CF'
 alias vi='nvim'
 alias vim='nvim'
 alias nv='nvim'
-alias cls='cl -s'
 alias ga='git add'
 alias gc='git commit'
 alias gcm='git commit -m'
@@ -263,24 +223,28 @@ alias gpu='git push -u'
 
 # Source custom functions
 [ -f ~/.config/zsh/functions.zsh ] && source ~/.config/zsh/functions.zsh
-
-# Beads
-export PATH="$HOME/.local/bin:$PATH"
 EOZSH
 
 # ---------------------------------------------------------------------------
-# Copy artifacts from builder stage
+# claude-multiagent plugin (from builder stage)
 # ---------------------------------------------------------------------------
-COPY --from=builder /bd /home/claude/.local/bin/bd
-COPY --from=builder /plugin-cache/ /home/claude/.claude/plugins/
+COPY --from=builder /plugin-cache/ /home/agent/.claude/plugins/
 
-# ---------------------------------------------------------------------------
-# Python venv for beads-tui (installed from the submodule's pyproject.toml)
-# ---------------------------------------------------------------------------
+# Enable the plugin in user-level settings
+RUN mkdir -p /home/agent/.claude && \
+    cat > /home/agent/.claude/settings.json <<'EOSETTINGS'
+{
+  "enabledPlugins": {
+    "claude-multiagent@gm2211-plugins": true
+  }
+}
+EOSETTINGS
+
+# beads-tui Python venv
 RUN set -eux; \
-    VERSION=$(cat /home/claude/.claude/plugins/.plugin-version); \
-    BEADS_TUI_DIR="/home/claude/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}/scripts/beads-tui"; \
-    VENV_DIR="/home/claude/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}/scripts/.beads-tui-venv"; \
+    VERSION=$(cat /home/agent/.claude/plugins/.plugin-version); \
+    BEADS_TUI_DIR="/home/agent/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}/scripts/beads-tui"; \
+    VENV_DIR="/home/agent/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}/scripts/.beads-tui-venv"; \
     python3 -m venv "${VENV_DIR}"; \
     "${VENV_DIR}/bin/pip" install --no-cache-dir "textual>=8.0.0"; \
     if [ -f "${BEADS_TUI_DIR}/pyproject.toml" ]; then \
@@ -288,50 +252,17 @@ RUN set -eux; \
     fi
 
 # ---------------------------------------------------------------------------
-# Enable the claude-multiagent plugin in user-level settings
+# Fix ownership
 # ---------------------------------------------------------------------------
-RUN mkdir -p /home/claude/.claude && \
-    cat > /home/claude/.claude/settings.json <<'EOSETTINGS'
-{
-  "enabledPlugins": {
-    "claude-multiagent@gm2211-plugins": true
-  },
-  "mcpServers": {
-    "render": {
-      "type": "http",
-      "url": "https://mcp.render.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${RENDER_API_KEY}"
-      }
-    }
-  }
-}
-EOSETTINGS
+RUN chown -R agent:agent /home/agent
 
 # ---------------------------------------------------------------------------
-# Entrypoint & final setup
+# Environment
 # ---------------------------------------------------------------------------
-COPY plugins/claude-multiagent/docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Fix ownership of all home directory contents
-RUN chown -R claude:claude /home/claude
-
-# ---------------------------------------------------------------------------
-# Healthcheck — verify the entrypoint finished setup (sentinel written by entrypoint.sh)
-# ---------------------------------------------------------------------------
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD test -f /tmp/claude-ready || exit 1
-
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
-ENV PATH="/home/claude/.local/bin:${PATH}"
 
-LABEL source_hash="${SOURCE_HASH}"
-
-USER claude
-WORKDIR /home/claude
-ENTRYPOINT ["/entrypoint.sh"]
+USER agent

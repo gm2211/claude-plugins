@@ -1,178 +1,89 @@
-# Claude Code — Dockerized Sandbox
+# Claude Code — Docker Sandbox Template
 
 ## Overview
-Run Claude Code in a locked-down Docker container. Claude runs with `--dangerously-skip-permissions` because the **container itself IS the sandbox** — Docker enforces isolation while Claude operates freely inside.
 
-Includes full dev environment: Zellij terminal multiplexer, Neovim with AstroNvim, Zsh with Starship prompt, and the claude-multiagent plugin pre-installed.
+Custom [Docker Sandbox template](https://docs.docker.com/ai/sandboxes/templates/) that extends `docker/sandbox-templates:claude-code` with a full dev environment: Zellij, Neovim (AstroNvim), Zsh + Starship, and custom shell configs.
+
+Docker Sandbox handles the lifecycle (workspace mounting, auth, Claude Code launch). This template just adds the tools and configs.
 
 ## Quick Start
 
 ```bash
-# Interactive wizard — handles everything
-./plugins/claude-multiagent/docker/launch.sh
+# Build the template (from repo root)
+docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
 
-# Specify a repo directly
-./plugins/claude-multiagent/docker/launch.sh owner/repo
+# Launch (mounts current directory as workspace)
+docker sandbox run -t gm-claude-dev claude .
 
-# Reuse a persistent per-repo volume (resume previous local state)
-./plugins/claude-multiagent/docker/launch.sh --persistent owner/repo
-
-# Non-interactive (for CI/automation)
-./plugins/claude-multiagent/docker/launch.sh --prompt "fix the failing tests" owner/repo
+# Or use the shell alias
+clauded .
 ```
 
 ## Prerequisites
 
-- **Docker Desktop** (or Docker Engine) — [Get Docker](https://docker.com/get-started)
-- **GitHub CLI** (`gh`) — optional if you already provide `GH_TOKEN`; required for interactive device-flow auth and repo listing
-- **Anthropic API key** — from [console.anthropic.com](https://console.anthropic.com)
+- **Docker Desktop** with Sandbox support
+- **`ANTHROPIC_API_KEY`** set in your shell config (`.zshrc` / `.bashrc`) — Docker Sandbox uses a daemon that doesn't inherit env vars from the current session
 
-## How Authentication Works
+## What's Baked In
 
-### Interactive (recommended)
+| Tool | Purpose |
+|---|---|
+| Zellij | Terminal multiplexer (Catppuccin Mocha, zjstatus bar) |
+| Neovim | Editor (AstroNvim distribution) |
+| Zsh + Starship | Shell + prompt |
+| GitHub CLI | GitHub operations |
+| Beads (`bd`) | Git-backed issue tracker |
+| Dolt | Versioned database (beads backend) |
+| colorls | Colorized `ls` with icons |
+| pbcopy (OSC 52) | Clipboard passthrough to host terminal |
 
-The launch script uses GitHub's **device flow** — no manual token creation needed:
+Plus all configs from `shell-configs/` (zellij layouts, nvim plugins, zsh functions, claude status line).
 
-1. Run `./plugins/claude-multiagent/docker/launch.sh`
-2. If not authenticated, a browser opens to `github.com/login/device`
-3. Enter the one-time code shown in your terminal
-4. Authorize the GitHub CLI
-5. Done — the script generates a token automatically
-
-### CI / Automation
-
-For headless environments, create a fine-grained Personal Access Token and pass
-it as `GH_TOKEN` (no `gh` binary/login required):
-
-1. Go to [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
-2. Set **"Only select repositories"** → pick your target repo
-3. Grant permissions: **Contents** (R/W), **Pull Requests** (R/W), **Metadata** (Read)
-4. Pass as `GH_TOKEN` environment variable
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key for Claude |
-| `GH_TOKEN` | Yes | — | GitHub token (auto by launch.sh, or manual PAT) |
-| `REPO` | Yes | — | Target repository (`owner/name`) |
-| `REPO_BRANCH` | No | default branch | Branch to checkout after cloning |
-| `CLAUDE_MODEL` | No | — | Model override (haiku/sonnet/opus) |
-| `CLAUDE_PROMPT` | No | — | Non-interactive mode prompt |
-| `PERSIST_REPO` | No | `false` | Reuse existing `/home/claude/repo` checkout (set by `launch.sh --persistent`) |
-| `GIT_USER_NAME` | No | Claude Agent | Git commit author name |
-| `GIT_USER_EMAIL` | No | claude@agent.local | Git commit author email |
-| `MAX_BUDGET_USD` | No | — | Maximum API spend limit in USD |
-
-## Usage Examples
-
-### Interactive Development
-```bash
-./plugins/claude-multiagent/docker/launch.sh owner/repo
-# Zellij opens inside the container
-# Type 'cc' to start Claude Code
-```
-
-### Non-Interactive Task
-```bash
-./plugins/claude-multiagent/docker/launch.sh --prompt "review the codebase and create a summary" owner/repo
-```
-
-### Docker Compose
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export GH_TOKEN=$(gh auth token)
-export REPO=owner/repo
-docker compose -f plugins/claude-multiagent/docker/docker-compose.yml up
-```
-
-### Custom Branch and Model
-```bash
-./plugins/claude-multiagent/docker/launch.sh --branch feature-x --model opus owner/repo
-```
-
-### Persistent Repo Mode
-```bash
-# Keeps repo state in a named Docker volume: claude-repo-<owner>-<repo>
-./plugins/claude-multiagent/docker/launch.sh --persistent owner/repo
-
-# Remove the persisted repo volume when you want a clean slate
-docker volume rm claude-repo-owner-repo
-```
-
-### Force Rebuild
-```bash
-./plugins/claude-multiagent/docker/launch.sh --rebuild owner/repo
-```
-
-### Claude Code Skill
-From within Claude Code:
-```
-/claude-in-docker owner/repo
-```
-
-## What's Inside the Container
-
-| Tool | Version | Purpose |
-|---|---|---|
-| Claude Code | latest | AI coding assistant |
-| claude-multiagent | latest | Multi-agent coordinator plugin |
-| Zellij | latest | Terminal multiplexer (Catppuccin Mocha theme) |
-| Neovim | stable | Editor (AstroNvim distribution) |
-| Zsh + Starship | latest | Shell + prompt |
-| GitHub CLI | latest | GitHub operations |
-| Beads (`bd`) | 0.56.1 | Git-backed issue tracker |
-| Node.js | 22 LTS | JavaScript runtime |
-| Python | 3.11+ | Python runtime |
-
-## Security Model
-
-- **Container = sandbox**: Docker enforces filesystem and process isolation
-- **Unrestricted network**: Full internet egress (needed for API calls, git, npm, etc.)
-- **`--dangerously-skip-permissions`**: Safe because the container IS the sandbox
-- **Scoped GitHub access**: Token from device flow inherits your permissions; fine-grained PATs limit to one repo
-- **No baked secrets**: All credentials passed via environment variables at runtime
-- **Default ephemeral**: Fresh git clone each run unless you opt into `--persistent`
-- **Optional persistent mode**: Stores repo state in a per-repo Docker volume (`claude-repo-<owner>-<repo>`)
-- **Resource limits**: 4GB RAM, 2 CPUs (configurable in docker-compose.yml or launch.sh)
-
-## Building Manually
+## Building
 
 ```bash
 # From repo root
-docker build -t claude-multiagent -f plugins/claude-multiagent/docker/Dockerfile .
+docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
 
-# Multi-arch build
-docker buildx build --platform linux/amd64,linux/arm64 -t claude-multiagent -f plugins/claude-multiagent/docker/Dockerfile .
+# Multi-arch
+docker buildx build --platform linux/amd64,linux/arm64 -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
 ```
 
-## Troubleshooting
+## Usage
 
-### Docker not running
-```
-Error: Docker daemon is not running
-```
-Start Docker Desktop and try again.
-
-### GitHub auth fails
 ```bash
-# Re-authenticate
-gh auth login --web
+# Current directory
+docker sandbox run -t gm-claude-dev claude .
+
+# Specific project
+docker sandbox run -t gm-claude-dev claude ~/projects/my-app
+
+# Multiple workspaces (docs read-only)
+docker sandbox run -t gm-claude-dev claude ~/projects/my-app ~/docs:ro
+
+# Named sandbox (reconnect later with same name)
+docker sandbox run --name my-project -t gm-claude-dev claude .
+
+# Pass args to Claude Code
+docker sandbox run -t gm-claude-dev claude . -- --continue
 ```
 
-### Get a shell without Claude
+## Shell Alias
+
+The `clauded` function in `functions.zsh`:
+
+```zsh
+clauded() {
+  docker sandbox run -t gm-claude-dev claude "$@"
+}
+```
+
+## Pushing to a Registry
+
 ```bash
-docker run --rm -it --entrypoint /bin/zsh \
-  -e GH_TOKEN=$(gh auth token) \
-  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -e REPO=owner/repo \
-  claude-multiagent
-```
+docker tag gm-claude-dev myorg/gm-claude-dev:v1
+docker push myorg/gm-claude-dev:v1
 
-### Check container logs
-```bash
-docker logs <container-id>
+# Team members use:
+docker sandbox run -t myorg/gm-claude-dev:v1 claude .
 ```
-
-### Image too large
-The image includes a full dev environment. For a minimal image (no Zellij/nvim/starship), modify the Dockerfile to skip those layers.

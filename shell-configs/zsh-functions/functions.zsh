@@ -539,15 +539,6 @@ _find_multiagent_script() {
   return 1
 }
 
-# Locate any file (by relative path) inside the claude-multiagent plugin directory.
-# More general than _find_multiagent_script — accepts e.g. "docker/launch.sh".
-_find_multiagent_file() {
-  local relpath="$1" match
-  for match in ~/projects/claude-plugins/plugins/claude-multiagent/"$relpath"; do
-    [[ -x "$match" ]] && echo "$match" && return 0
-  done
-  return 1
-}
 
 # Open dashboard panes (if available) then launch claude.
 # Pane script is idempotent — safe to call on every launch.
@@ -685,15 +676,22 @@ claude() {
   _claude_launch "$@"
 }
 
-# clauded() — Launch Claude inside a Docker container.
-#
-# Finds the Docker launch script from the claude-multiagent plugin and
-# passes all arguments through to it.
+# clauded() — Launch Claude inside a Docker sandbox with custom dev environment.
+# Uses gm-claude-dev template (zellij, nvim, starship, zsh).
+# Auto-builds the image on first use. Use --rebuild to force a fresh build.
 clauded() {
-  local _launcher
-  _launcher="$(_find_multiagent_file "docker/launch.sh" 2>/dev/null)" || {
-    printf 'ERROR: docker/launch.sh not found in claude-multiagent plugin.\n' >&2
-    return 1
-  }
-  "$_launcher" "$@"
+  local _image="gm-claude-dev"
+  local _repo="$HOME/projects/claude-plugins"
+  local _dockerfile="plugins/claude-multiagent/docker/Dockerfile"
+
+  if [[ "$1" == "--rebuild" ]]; then
+    shift
+    printf '\033[1;34m[clauded]\033[0m Rebuilding %s...\n' "$_image"
+    docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+  elif ! docker image inspect "$_image" &>/dev/null; then
+    printf '\033[1;34m[clauded]\033[0m Image %s not found, building...\n' "$_image"
+    docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+  fi
+
+  docker sandbox run -t "$_image" claude "$@"
 }
