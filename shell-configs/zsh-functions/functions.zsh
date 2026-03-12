@@ -667,15 +667,7 @@ claude() {
   _claude_launch "$@"
 }
 
-# clauded() — Launch Claude inside a Docker container.
-#
-# Finds the Docker launch script from the claude-multiagent plugin and
-# passes all arguments through to it.
+# clauded() — Launch Claude inside a Docker sandbox.
 clauded() {
-  local _launcher
-  _launcher="$(_find_multiagent_file "docker/launch.sh" 2>/dev/null)" || {
-    printf 'ERROR: docker/launch.sh not found in claude-multiagent plugin.\n' >&2
-    return 1
-  }
-  "$_launcher" "$@"
+  docker sandbox run claude -- --dangerously-skip-permissions "$@"
 }
