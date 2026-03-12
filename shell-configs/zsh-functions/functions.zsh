@@ -660,7 +660,20 @@ claude() {
 
 # clauded() — Launch Claude inside a Docker sandbox with custom dev environment.
 # Uses gm-claude-dev template (zellij, nvim, starship, zsh).
-# Build template: cd ~/projects/claude-plugins && docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
+# Auto-builds the image on first use. Use --rebuild to force a fresh build.
 clauded() {
-  docker sandbox run -t gm-claude-dev claude "$@"
+  local _image="gm-claude-dev"
+  local _repo="$HOME/projects/claude-plugins"
+  local _dockerfile="plugins/claude-multiagent/docker/Dockerfile"
+
+  if [[ "$1" == "--rebuild" ]]; then
+    shift
+    printf '\033[1;34m[clauded]\033[0m Rebuilding %s...\n' "$_image"
+    docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+  elif ! docker image inspect "$_image" &>/dev/null; then
+    printf '\033[1;34m[clauded]\033[0m Image %s not found, building...\n' "$_image"
+    docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+  fi
+
+  docker sandbox run -t "$_image" claude "$@"
 }
