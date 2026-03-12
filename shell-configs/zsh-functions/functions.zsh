@@ -79,6 +79,20 @@ wt() {
   _wt_warn() { printf 'WARNING: %s\n' "$*" >&2; }
   _wt_err()  { printf 'ERROR: %s\n' "$*" >&2; }
 
+  # Resolve a worktree basename to its absolute path via git worktree list.
+  # Prints the path to stdout; returns 1 if not found.
+  _wt_resolve_path() {
+    local name="$1" _line _path
+    while IFS= read -r _line; do
+      _path="${_line%%  *}"
+      if [ "$(basename "$_path")" = "$name" ]; then
+        printf '%s' "$_path"
+        return 0
+      fi
+    done < <(git worktree list 2>/dev/null)
+    return 1
+  }
+
   local subcmd="${1:-}"
   local is_delete_cmd=0
   case "$subcmd" in
@@ -218,20 +232,19 @@ wt() {
     ###########################################################################
 
     "")
-      # Collect existing session worktrees (directories without -- in their name)
+      # Collect existing session worktrees from git worktree list (not just .worktrees/)
       local session_worktrees=()
-      if [ -d "$worktrees_dir" ]; then
-        local wt_dir wt_name
-        # Suppress "no matches found" in zsh when glob matches nothing
-        [ -n "$ZSH_VERSION" ] && setopt local_options NULL_GLOB
-        for wt_dir in "$worktrees_dir"/*/; do
-          [ -d "$wt_dir" ] || continue
-          wt_name="$(basename "$wt_dir")"
-          # Skip task worktrees (contain --)
-          case "$wt_name" in *--*) continue ;; esac
-          session_worktrees+=("$wt_name")
-        done
-      fi
+      local _wt_path _wt_name
+      while IFS= read -r _wt_line; do
+        # git worktree list format: "/path/to/worktree  <hash> [branch]"
+        _wt_path="${_wt_line%%  *}"
+        # Skip the main repo root itself
+        [ "$_wt_path" = "$repo_root" ] && continue
+        _wt_name="$(basename "$_wt_path")"
+        # Skip task worktrees (contain --)
+        case "$_wt_name" in *--*) continue ;; esac
+        session_worktrees+=("$_wt_name")
+      done < <(git worktree list 2>/dev/null)
 
       if [ ${#session_worktrees[@]} -eq 0 ]; then
         _wt_msg "No worktrees found. Use \`wt new\` to create one."
@@ -322,13 +335,12 @@ wt() {
         return 1
       fi
 
-      local target_dir="$worktrees_dir/$choice"
-
-      if [ ! -d "$target_dir" ]; then
-        _wt_err "Worktree directory does not exist: $target_dir"
+      local target_dir
+      target_dir="$(_wt_resolve_path "$choice")" || {
+        _wt_err "Worktree directory not found for '$choice'."
         trap - INT
         return 1
-      fi
+      }
 
       _wt_msg ""
       _wt_msg "Switching to worktree: $choice"
@@ -364,18 +376,16 @@ wt() {
         esac
       done
 
-      # Collect existing session worktrees (directories without -- in their name)
+      # Collect existing session worktrees from git worktree list (not just .worktrees/)
       local session_worktrees=()
-      if [ -d "$worktrees_dir" ]; then
-        local wt_dir wt_name
-        [ -n "$ZSH_VERSION" ] && setopt local_options NULL_GLOB
-        for wt_dir in "$worktrees_dir"/*/; do
-          [ -d "$wt_dir" ] || continue
-          wt_name="$(basename "$wt_dir")"
-          case "$wt_name" in *--*) continue ;; esac
-          session_worktrees+=("$wt_name")
-        done
-      fi
+      local _wt_line _wt_path _wt_name
+      while IFS= read -r _wt_line; do
+        _wt_path="${_wt_line%%  *}"
+        [ "$_wt_path" = "$repo_root" ] && continue
+        _wt_name="$(basename "$_wt_path")"
+        case "$_wt_name" in *--*) continue ;; esac
+        session_worktrees+=("$_wt_name")
+      done < <(git worktree list 2>/dev/null)
 
       if [ ${#session_worktrees[@]} -eq 0 ]; then
         _wt_msg "No worktrees found to delete."
@@ -457,12 +467,12 @@ wt() {
         fi
       fi
 
-      local target_dir="$worktrees_dir/$choice"
-      if [ ! -d "$target_dir" ]; then
-        _wt_err "Worktree directory does not exist: $target_dir"
+      local target_dir
+      target_dir="$(_wt_resolve_path "$choice")" || {
+        _wt_err "Worktree directory not found for '$choice'."
         trap - INT
         return 1
-      fi
+      }
 
       local target_abs pwd_abs
       target_abs="$(cd "$target_dir" && pwd -P)"
@@ -504,10 +514,32 @@ wt() {
       local remove_args=()
       [ "$del_force" -eq 1 ] && remove_args+=(--force)
 
-      git worktree remove "${remove_args[@]}" "$target_dir" || {
-        _wt_err "Failed to remove worktree '$choice'. Use --force if there are uncommitted changes."
-        trap - INT
-        return 1
+      git worktree remove "${remove_args[@]}" "$target_dir" 2>/dev/null || {
+        if [ "$del_force" -eq 0 ]; then
+          printf "%s" "Worktree has modified/untracked files. Force delete? [y/N]: "
+          if [ -t 0 ]; then
+            read -r force_confirm
+          else
+            _wt_err "No TTY for force confirmation. Re-run with --force."
+            trap - INT
+            return 1
+          fi
+          if [[ "$force_confirm" =~ ^[Yy]$ ]]; then
+            git worktree remove --force "$target_dir" || {
+              _wt_err "Failed to force-remove worktree '$choice'."
+              trap - INT
+              return 1
+            }
+          else
+            _wt_msg "Kept worktree '$choice'."
+            trap - INT
+            return 0
+          fi
+        else
+          _wt_err "Failed to remove worktree '$choice' (even with --force)."
+          trap - INT
+          return 1
+        fi
       }
 
       git worktree prune >/dev/null 2>&1

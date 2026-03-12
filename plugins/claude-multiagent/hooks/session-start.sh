@@ -325,26 +325,8 @@ coordinator_content=$(cat "${PLUGIN_ROOT}/skills/multiagent-coordinator/SKILL.md
 coordinator_content="${coordinator_content//\$PLUGIN_ROOT/${PLUGIN_ROOT}}"
 coordinator_escaped=$(escape_for_json "$coordinator_content")
 
-# Open Zellij dashboard panes (shared script; captures output to avoid
-# breaking JSON on stdout). Any warnings (e.g. multi-session) are stored
-# and relayed to the model via additionalContext.
-dashboard_output=$("${PLUGIN_ROOT}/scripts/open-dashboard.sh" "${PWD}" 2>&1) || true
-
-# Build the dashboard status note for the model based on explicit status codes
-# from open-dashboard.sh: PANES_CREATED, PANES_EXIST, SKIPPED:reason, FAILED:reason
-if [[ -z "$dashboard_output" ]]; then
-  dashboard_note="Dashboard status unknown — use /panes to retry."
-elif [[ "$dashboard_output" == *"PANES_CREATED"* ]]; then
-  dashboard_note="Dashboard panes created successfully."
-elif [[ "$dashboard_output" == *"PANES_EXIST"* ]]; then
-  dashboard_note="The Zellij dashboard panes are already open."
-elif [[ "$dashboard_output" == *"SKIPPED:"* ]]; then
-  dashboard_note="Dashboard skipped: ${dashboard_output#*SKIPPED:}"
-elif [[ "$dashboard_output" == *"FAILED:"* ]]; then
-  dashboard_note="Dashboard failed: ${dashboard_output#*FAILED:}. Use /panes to retry."
-else
-  dashboard_note="Dashboard status unknown (${dashboard_output}) — use /panes to retry."
-fi
+# Dashboard panes — don't auto-open, just note availability
+dashboard_note="Dashboard panes available — ask user with AskUserQuestion before opening. Run /panes or open-dashboard.sh to open."
 dashboard_note_escaped=$(escape_for_json "$dashboard_note")
 
 # Prepend cache staleness warning if detected
@@ -358,7 +340,7 @@ cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "${CACHE_STALE_ESCAPED}${PERMISSIONS_BOOTSTRAP}${WORKTREE_CONTEXT_ESCAPED}<EXTREMELY_IMPORTANT>\nYou are a COORDINATOR (claude-multiagent plugin). FORBIDDEN from editing files, writing code, running builds/tests/linters. Only git merges allowed. No exceptions. Dispatch sub-agents for all work. If task feels small, ask user via AskUserQuestion before doing it yourself.\n\nThe following is your complete behavioral specification. Every rule is mandatory.\n\n${coordinator_escaped}\n\n${dashboard_note_escaped}\n\nAcknowledge coordinator mode in your first response.\n</EXTREMELY_IMPORTANT>"
+    "additionalContext": "${CACHE_STALE_ESCAPED}${PERMISSIONS_BOOTSTRAP}${WORKTREE_CONTEXT_ESCAPED}<EXTREMELY_IMPORTANT>\nYou are a COORDINATOR (claude-multiagent plugin). FORBIDDEN from editing files, writing code, running builds/tests/linters. Only git merges allowed. No exceptions. Dispatch sub-agents for all work. If task feels small, ask user via AskUserQuestion before doing it yourself.\n\nThe following is your complete behavioral specification. Every rule is mandatory.\n\n${coordinator_escaped}\n\n${dashboard_note_escaped}\n</EXTREMELY_IMPORTANT>"
   }
 }
 EOF
