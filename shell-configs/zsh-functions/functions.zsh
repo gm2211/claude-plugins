@@ -731,6 +731,41 @@ clauded() {
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   fi
 
+  # Stage host ~/.claude config files into the workspace so the sandbox can
+  # pick them up (Docker Sandbox preserves host paths, so $PWD is the same
+  # inside the sandbox).  ensure-plugins.sh handles the install at startup.
+  local _mount_dir="$PWD/.claude-sandbox-mount"
+  mkdir -p "$_mount_dir"
+  [ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$_mount_dir/"
+  [ -f "$HOME/.claude/statusline.sh" ] && cp "$HOME/.claude/statusline.sh" "$_mount_dir/"
+
+  # Cleanup helper — remove staging dir when clauded exits
+  _clauded_cleanup() { rm -rf "$_mount_dir" 2>/dev/null; }
+  trap '_clauded_cleanup' EXIT INT TERM
+
+  # Helper: run docker sandbox with extra workspace mounts injected before
+  # any "--" separator in the args.  Extra mounts are read-only directories
+  # that should be available inside the sandbox (e.g. ~/projects/specify).
+  _clauded_sandbox_run() {
+    local _pre=() _post=() _seen_sep=false
+    for _a in "$@"; do
+      if [[ "$_a" == "--" ]] && ! $_seen_sep; then
+        _seen_sep=true
+      elif $_seen_sep; then
+        _post+=("$_a")
+      else
+        _pre+=("$_a")
+      fi
+    done
+    # Append extra workspace mounts (read-only)
+    [ -d "$HOME/projects/specify" ] && _pre+=("$HOME/projects/specify:ro")
+    if $_seen_sep; then
+      docker sandbox run "${_pre[@]}" -- "${_post[@]}"
+    else
+      docker sandbox run "${_pre[@]}"
+    fi
+  }
+
   # Derive the sandbox name docker would use for this workspace
   local _sandbox_name="claude-$(basename "$PWD")"
 
@@ -739,7 +774,7 @@ clauded() {
     if $_rebuild; then
       printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
       docker sandbox rm "$_sandbox_name" 2>/dev/null
-      docker sandbox run -t "$_image" claude "$@"
+      _clauded_sandbox_run -t "$_image" claude "$@"
     else
       printf '\033[1;34m[clauded]\033[0m Found existing sandbox %s.\n' "$_sandbox_name"
 
@@ -796,15 +831,19 @@ clauded() {
           ;;
         1)
           docker sandbox rm "$_sandbox_name" 2>/dev/null
-          docker sandbox run -t "$_image" claude "$@"
+          _clauded_sandbox_run -t "$_image" claude "$@"
           ;;
         *)
           printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
+          _clauded_cleanup
           return 0
           ;;
       esac
     fi
   else
-    docker sandbox run -t "$_image" claude "$@"
+    _clauded_sandbox_run -t "$_image" claude "$@"
   fi
+
+  _clauded_cleanup
+  unfunction _clauded_sandbox_run 2>/dev/null
 }

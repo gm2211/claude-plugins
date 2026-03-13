@@ -83,8 +83,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
         openssh-client \
         locales \
+        fontconfig \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Nerd Fonts — Symbols Only (provides icons for status line, zellij, etc.)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    mkdir -p /usr/share/fonts/nerd-fonts; \
+    curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/NerdFontsSymbolsOnly.tar.xz" \
+        | tar xJ -C /usr/share/fonts/nerd-fonts; \
+    fc-cache -fv
 
 # ---------------------------------------------------------------------------
 # colorls (colorized ls with icons)
@@ -242,7 +252,32 @@ RUN cat > /home/agent/.local/bin/ensure-plugins.sh <<'EOSCRIPT'
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
-# Desired settings to merge
+# ---------------------------------------------------------------------------
+# Install host-mounted config files from .claude-sandbox-mount/
+# (staged by clauded() on the host before sandbox launch)
+# ---------------------------------------------------------------------------
+MOUNT_DIR=$(find /Users /home -maxdepth 6 -name ".claude-sandbox-mount" -type d 2>/dev/null | head -1)
+if [ -n "$MOUNT_DIR" ]; then
+  # Global CLAUDE.md → ~/.claude/CLAUDE.md
+  if [ -f "$MOUNT_DIR/CLAUDE.md" ]; then
+    cp "$MOUNT_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+  fi
+  # Host statusline script → overwrite the baked-in one
+  if [ -f "$MOUNT_DIR/statusline.sh" ]; then
+    cp "$MOUNT_DIR/statusline.sh" "$HOME/.config/claude-status-line/statusline.sh"
+    chmod +x "$HOME/.config/claude-status-line/statusline.sh"
+  fi
+fi
+
+# sp (specify) — symlink if the workspace is mounted
+SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
+if [ -n "$SP_RUN" ]; then
+  ln -sf "$SP_RUN" /usr/local/bin/sp
+fi
+
+# ---------------------------------------------------------------------------
+# Merge plugin + statusLine settings into settings.json
+# ---------------------------------------------------------------------------
 MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
 
 if [ ! -f "$SETTINGS" ]; then
