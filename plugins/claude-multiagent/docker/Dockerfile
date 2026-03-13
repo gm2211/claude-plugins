@@ -240,16 +240,25 @@ COPY --from=builder /plugin-cache/ /home/agent/.claude/plugins/
 RUN cat > /home/agent/.local/bin/ensure-plugins.sh <<'EOSCRIPT'
 #!/bin/sh
 SETTINGS="$HOME/.claude/settings.json"
-PLUGIN_KEY='"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}'
 mkdir -p "$(dirname "$SETTINGS")"
+
+# Desired settings to merge
+MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
+
 if [ ! -f "$SETTINGS" ]; then
-  printf '{%s}\n' "$PLUGIN_KEY" > "$SETTINGS"
-elif ! grep -q '"enabledPlugins"' "$SETTINGS" 2>/dev/null; then
-  if command -v jq >/dev/null 2>&1; then
-    jq '. + {"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}' "$SETTINGS" > "${SETTINGS}.tmp" \
-      && mv "${SETTINGS}.tmp" "$SETTINGS"
-  else
+  printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
+elif command -v jq >/dev/null 2>&1; then
+  # Merge: existing settings take precedence for statusLine if already set,
+  # but always ensure enabledPlugins and statusLine are present
+  jq --argjson merge "$MERGE_OBJ" '$merge * .' "$SETTINGS" > "${SETTINGS}.tmp" \
+    && mv "${SETTINGS}.tmp" "$SETTINGS"
+else
+  # Fallback without jq: inject keys if missing
+  if ! grep -q '"enabledPlugins"' "$SETTINGS" 2>/dev/null; then
     sed -i 's/}$/,"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}/' "$SETTINGS"
+  fi
+  if ! grep -q '"statusLine"' "$SETTINGS" 2>/dev/null; then
+    sed -i 's/}$/,"statusLine":{"type":"command","command":"~\/.config\/claude-status-line\/statusline.sh"}}/' "$SETTINGS"
   fi
 fi
 EOSCRIPT
