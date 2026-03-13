@@ -18,6 +18,11 @@ if [ -z "${ZELLIJ:-}" ]; then
     exit 0
 fi
 
+# Kitty desktop notification (no-op outside Kitty)
+kitty_notify() {
+    [[ -n "${KITTY_PID:-}" ]] && kitten notify "$@" 2>/dev/null || true
+}
+
 # ── Parse event ────────────────────────────────────────────────────────────
 
 EVENT=$(cat)
@@ -29,10 +34,12 @@ case "$HOOK_TYPE" in
     "Stop"|"stop")
         zellij pipe --name "zellij-attention::completed::$ZELLIJ_PANE_ID"
         zellij action pipe --name zjstatus --args "pipe_status" -- "#[fg=#a6e3a1,bold]✓ done"
+        kitty_notify "Agent Complete" "Task finished"
         ;;
     "Notification"|"notification")
         zellij pipe --name "zellij-attention::waiting::$ZELLIJ_PANE_ID"
         zellij action pipe --name zjstatus --args "pipe_status" -- "#[fg=#f38ba8,bold]? input needed"
+        kitty_notify "Needs Attention" "Agent is waiting for input"
         ;;
     "SessionEnd"|"session_end")
         zellij pipe --name "zellij-attention::completed::$ZELLIJ_PANE_ID"
