@@ -272,7 +272,8 @@ fi
 # sp (specify) — symlink if the workspace is mounted
 SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
 if [ -n "$SP_RUN" ]; then
-  ln -sf "$SP_RUN" /usr/local/bin/sp
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$SP_RUN" "$HOME/.local/bin/sp"
 fi
 
 # ---------------------------------------------------------------------------

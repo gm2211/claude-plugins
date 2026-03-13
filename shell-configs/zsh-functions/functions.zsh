@@ -1,6 +1,8 @@
 # Portable ZSH functions
 # Sourced from claude-plugins/shell-configs/zsh-functions/
 
+_CLAUDE_SCREENSHOTS_DIR="/tmp/claude-screenshots"
+
 alias nv='nvim'
 
 # ZLE word-navigation bindings for Kitty + Zellij
@@ -20,7 +22,7 @@ if [[ $- == *i* ]]; then
 fi
 
 function ss() {
-    local dir="/tmp/claude-screenshots"
+    local dir="${_CLAUDE_SCREENSHOTS_DIR}"
     mkdir -p "$dir"
     local f="${dir}/ss-$(date +%s)-${RANDOM}.png"
 
@@ -716,11 +718,17 @@ clauded() {
   local _repo="$HOME/projects/claude-plugins"
   local _dockerfile="plugins/claude-multiagent/docker/Dockerfile"
   local _rebuild=false
+  local _mount=false
+  local _extra_mounts=()
 
-  if [[ "$1" == "--rebuild" ]]; then
-    shift
-    _rebuild=true
-  fi
+  # Parse flags
+  while [[ "$1" == --* || "$1" == -* ]]; do
+    case "$1" in
+      --rebuild)  _rebuild=true; shift ;;
+      --mount|-m) _mount=true; shift ;;
+      *) break ;;
+    esac
+  done
 
   # Build image if needed
   if $_rebuild; then
@@ -743,6 +751,56 @@ clauded() {
   _clauded_cleanup() { rm -rf "$_mount_dir" 2>/dev/null; }
   trap '_clauded_cleanup' EXIT INT TERM
 
+  # -------------------------------------------------------------------------
+  # Extra mount picker — fzf-based directory browser with multiselect.
+  # Called only when creating a new sandbox (mounts can't be added to
+  # existing sandboxes).
+  # -------------------------------------------------------------------------
+  _clauded_prompt_mounts() {
+    if ! $_mount; then
+      printf '\033[1;34m[clauded]\033[0m Mount extra directories into sandbox? [y/N] '
+      read -rsk1 _ans
+      printf '\n'
+      [[ "$_ans" == [yY] ]] && _mount=true
+    fi
+
+    if $_mount; then
+      if command -v fzf >/dev/null 2>&1; then
+        printf '\033[90m  Tab=toggle  Enter=confirm  Esc=skip\033[0m\n'
+        local _selected
+        _selected=$(
+          find "$HOME" -maxdepth 4 -type d \
+            -not -path '*/\.*' \
+            -not -path '*/node_modules/*' \
+            -not -path '*/venv/*' \
+            -not -path '*/__pycache__/*' \
+            -not -path '*/Library/*' \
+            2>/dev/null \
+          | sed "s|^$HOME|~|" \
+          | sort \
+          | fzf --multi \
+                --height=~60% \
+                --reverse \
+                --prompt="Select directories to mount (ro): " \
+                --header="Browse ~ — Tab to toggle, Enter to confirm" \
+                --preview="ls -lhF --color=always \$(echo {} | sed \"s|^~|$HOME|\")" \
+                --preview-window=right:40% \
+            2>/dev/null
+        )
+        if [ -n "$_selected" ]; then
+          while IFS= read -r _dir; do
+            # Expand ~ back to $HOME
+            _dir="${_dir/#\~/$HOME}"
+            _extra_mounts+=("${_dir}:ro")
+            printf '\033[1;34m[clauded]\033[0m  + %s (ro)\n' "$_dir"
+          done <<< "$_selected"
+        fi
+      else
+        printf '\033[1;33m[clauded]\033[0m fzf not found — install with: brew install fzf\n'
+      fi
+    fi
+  }
+
   # Helper: run docker sandbox with extra workspace mounts injected before
   # any "--" separator in the args.  Extra mounts are read-only directories
   # that should be available inside the sandbox (e.g. ~/projects/specify).
@@ -757,8 +815,21 @@ clauded() {
         _pre+=("$_a")
       fi
     done
-    # Append extra workspace mounts (read-only)
-    [ -d "$HOME/projects/specify" ] && _pre+=("$HOME/projects/specify:ro")
+    # Explicit primary workspace (rw) so extra mounts aren't mistaken for it
+    _pre+=(".")
+    # Mount specify if available and not already owned by another sandbox
+    if [ -d "$HOME/projects/specify" ]; then
+      if ! docker sandbox ls 2>/dev/null | awk 'NR>1 {print $NF}' | grep -qx "$HOME/projects/specify"; then
+        _pre+=("$HOME/projects/specify:ro")
+      fi
+    fi
+    # Mount screenshots dir so host `ss` images are visible inside sandbox
+    mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
+    _pre+=("${_CLAUDE_SCREENSHOTS_DIR}:ro")
+    # Append user-selected extra mounts
+    for _m in "${_extra_mounts[@]}"; do
+      _pre+=("$_m")
+    done
     if $_seen_sep; then
       docker sandbox run "${_pre[@]}" -- "${_post[@]}"
     else
@@ -774,6 +845,7 @@ clauded() {
     if $_rebuild; then
       printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
       docker sandbox rm "$_sandbox_name" 2>/dev/null
+      _clauded_prompt_mounts
       _clauded_sandbox_run -t "$_image" claude "$@"
     else
       printf '\033[1;34m[clauded]\033[0m Found existing sandbox %s.\n' "$_sandbox_name"
@@ -831,6 +903,7 @@ clauded() {
           ;;
         1)
           docker sandbox rm "$_sandbox_name" 2>/dev/null
+          _clauded_prompt_mounts
           _clauded_sandbox_run -t "$_image" claude "$@"
           ;;
         *)
@@ -841,9 +914,10 @@ clauded() {
       esac
     fi
   else
+    _clauded_prompt_mounts
     _clauded_sandbox_run -t "$_image" claude "$@"
   fi
 
   _clauded_cleanup
-  unfunction _clauded_sandbox_run 2>/dev/null
+  unfunction _clauded_sandbox_run _clauded_prompt_mounts 2>/dev/null
 }
