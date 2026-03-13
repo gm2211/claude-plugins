@@ -715,9 +715,15 @@ clauded() {
   local _image="gm-claude-dev"
   local _repo="$HOME/projects/claude-plugins"
   local _dockerfile="plugins/claude-multiagent/docker/Dockerfile"
+  local _rebuild=false
 
   if [[ "$1" == "--rebuild" ]]; then
     shift
+    _rebuild=true
+  fi
+
+  # Build image if needed
+  if $_rebuild; then
     printf '\033[1;34m[clauded]\033[0m Rebuilding %s...\n' "$_image"
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   elif ! docker image inspect "$_image" &>/dev/null; then
@@ -725,5 +731,80 @@ clauded() {
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   fi
 
-  docker sandbox run -t "$_image" claude "$@"
+  # Derive the sandbox name docker would use for this workspace
+  local _sandbox_name="claude-$(basename "$PWD")"
+
+  # Check if a sandbox already exists for this workspace
+  if docker sandbox ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$_sandbox_name"; then
+    if $_rebuild; then
+      printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
+      docker sandbox rm "$_sandbox_name" 2>/dev/null
+      docker sandbox run -t "$_image" claude "$@"
+    else
+      printf '\033[1;34m[clauded]\033[0m Found existing sandbox %s.\n' "$_sandbox_name"
+
+      local _options=("Resume — reattach to existing sandbox"
+                      "New    — remove old sandbox, create fresh one"
+                      "Cancel — abort")
+      local _sel=0
+      local _n=${#_options[@]}
+      local _key
+
+      # Hide cursor
+      printf '\033[?25l'
+
+      # Draw menu
+      _clauded_draw_menu() {
+        for (( i=0; i<_n; i++ )); do
+          if (( i == _sel )); then
+            printf '\033[1;34m  ▸ %s\033[0m\n' "${_options[$((i+1))]}"
+          else
+            printf '    %s\n' "${_options[$((i+1))]}"
+          fi
+        done
+      }
+
+      _clauded_draw_menu
+
+      while true; do
+        read -rsk1 _key
+        if [[ "$_key" == $'\e' ]]; then
+          read -rsk2 _key
+          _key="${_key[2]}"
+        fi
+        case "$_key" in
+          A|k) (( _sel = (_sel - 1 + _n) % _n )) ;;  # up
+          B|j) (( _sel = (_sel + 1) % _n )) ;;        # down
+          $'\n'|'') break ;;                             # enter
+          q) _sel=2; break ;;                           # quit = cancel
+        esac
+        # Redraw: move up _n lines, clear, redraw
+        printf "\033[${_n}A"
+        for (( i=0; i<_n; i++ )); do printf '\033[2K\r'; [[ $i -lt $((_n-1)) ]] && printf '\n'; done
+        printf "\033[${_n}A"  # back to top again
+        _clauded_draw_menu
+      done
+
+      # Show cursor
+      printf '\033[?25h'
+
+      unfunction _clauded_draw_menu 2>/dev/null
+
+      case $_sel in
+        0)
+          docker sandbox run "$_sandbox_name" -- "$@"
+          ;;
+        1)
+          docker sandbox rm "$_sandbox_name" 2>/dev/null
+          docker sandbox run -t "$_image" claude "$@"
+          ;;
+        *)
+          printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
+          return 0
+          ;;
+      esac
+    fi
+  else
+    docker sandbox run -t "$_image" claude "$@"
+  fi
 }

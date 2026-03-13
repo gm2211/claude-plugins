@@ -80,6 +80,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         uuid-runtime \
         postgresql-client \
+        python3-venv \
+        openssh-client \
         locales \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
@@ -191,6 +193,9 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
 # Zsh configuration
 # ---------------------------------------------------------------------------
 RUN cat > /home/agent/.zshrc <<'EOZSH'
+# Ensure plugins are enabled (Docker sandbox overwrites settings.json on creation)
+[ -x ~/.local/bin/ensure-plugins.sh ] && ~/.local/bin/ensure-plugins.sh
+
 # Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
 if [[ -z "$ZELLIJ" ]] && [[ $- == *i* ]] && command -v zellij &>/dev/null; then
     exec zellij
@@ -230,15 +235,25 @@ EOZSH
 # ---------------------------------------------------------------------------
 COPY --from=builder /plugin-cache/ /home/agent/.claude/plugins/
 
-# Enable the plugin in user-level settings
-RUN mkdir -p /home/agent/.claude && \
-    cat > /home/agent/.claude/settings.json <<'EOSETTINGS'
-{
-  "enabledPlugins": {
-    "claude-multiagent@gm2211-plugins": true
-  }
-}
-EOSETTINGS
+# Ensure enabledPlugins is merged into settings.json at startup
+# (Docker sandbox overwrites settings.json on creation, so we merge at runtime)
+RUN cat > /home/agent/.local/bin/ensure-plugins.sh <<'EOSCRIPT'
+#!/bin/sh
+SETTINGS="$HOME/.claude/settings.json"
+PLUGIN_KEY='"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}'
+mkdir -p "$(dirname "$SETTINGS")"
+if [ ! -f "$SETTINGS" ]; then
+  printf '{%s}\n' "$PLUGIN_KEY" > "$SETTINGS"
+elif ! grep -q '"enabledPlugins"' "$SETTINGS" 2>/dev/null; then
+  if command -v jq >/dev/null 2>&1; then
+    jq '. + {"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}' "$SETTINGS" > "${SETTINGS}.tmp" \
+      && mv "${SETTINGS}.tmp" "$SETTINGS"
+  else
+    sed -i 's/}$/,"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}/' "$SETTINGS"
+  fi
+fi
+EOSCRIPT
+RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 
 # beads-tui Python venv
 RUN set -eux; \
@@ -250,6 +265,12 @@ RUN set -eux; \
     if [ -f "${BEADS_TUI_DIR}/pyproject.toml" ]; then \
         "${VENV_DIR}/bin/pip" install --no-cache-dir "${BEADS_TUI_DIR}"; \
     fi
+
+# ---------------------------------------------------------------------------
+# Git credential helper — use gh CLI for HTTPS auth (needs GH_TOKEN env var)
+# ---------------------------------------------------------------------------
+RUN git config --system credential.helper '!/usr/bin/gh auth git-credential' \
+    && git config --system url."https://github.com/".insteadOf "git@github.com:"
 
 # ---------------------------------------------------------------------------
 # Fix ownership
