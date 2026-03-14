@@ -952,17 +952,31 @@ clauded() {
       fi
     done
 
-    # Build workspace list
+    # Build workspace list (skip paths that overlap with $PWD to avoid conflicts)
+    local _pwd_real
+    _pwd_real="$(pwd -P)"
     local _workspaces=(".")
-    [ -d "$HOME/.claude" ] && _workspaces+=("$HOME/.claude:ro")
-    [ -d "$HOME/.config/gh" ] && _workspaces+=("$HOME/.config/gh:ro")
-    [ -d "$HOME/projects/specify" ] && _workspaces+=("$HOME/projects/specify:ro")
+
+    _clauded_add_mount() {
+      local _path="${1%%:*}"  # strip :ro suffix
+      local _real
+      _real="$(cd "$_path" 2>/dev/null && pwd -P)" || return 0
+      # Skip if this path is or contains $PWD, or $PWD contains this path
+      case "$_pwd_real" in "$_real"*) return 0 ;; esac
+      case "$_real" in "$_pwd_real"*) return 0 ;; esac
+      _workspaces+=("$1")
+    }
+
+    [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude:ro"
+    [ -d "$HOME/.config/gh" ] && _clauded_add_mount "$HOME/.config/gh:ro"
+    [ -d "$HOME/projects/specify" ] && _clauded_add_mount "$HOME/projects/specify:ro"
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
-    _workspaces+=("${_CLAUDE_SCREENSHOTS_DIR}:ro")
+    _clauded_add_mount "${_CLAUDE_SCREENSHOTS_DIR}:ro"
     [ -n "$_env_file" ] && [ -f "$_env_file" ] && _workspaces+=("$_env_file:ro")
     for _m in "${_extra_mounts[@]}"; do
-      _workspaces+=("$_m")
+      _clauded_add_mount "$_m"
     done
+    unfunction _clauded_add_mount 2>/dev/null
 
     # docker sandbox run [flags] AGENT WORKSPACE... [-- AGENT_ARGS...]
     local _cmd=(docker sandbox run "${_flags[@]}" claude "${_workspaces[@]}")
