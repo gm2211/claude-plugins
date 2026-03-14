@@ -580,40 +580,47 @@ wt() {
 #   -s         Case-sensitive (default: case-insensitive)
 #   -1         Stop after first match
 #   --delete   Delete matching files
-#   --         Pass remaining args directly to find
+#   -- CMD     Execute CMD on each match ({} auto-appended if missing)
 #
 # Examples:
 #   f "*.js"                Find all .js files
 #   f config -t d           Find directories containing "config"
-#   f "*.log" -x "rm {}"   Find .log files and delete them
+#   f "*.ttf" -- cat        Exec cat on each match (cat {} \;)
+#   f "*.log" -- rm         Delete .log files
 #   f todo /src -n 7        Files with "todo" modified in last 7 days
 #   f "*.pyc" --delete      Delete all .pyc files
 #   f readme -1             First file matching *readme*
 
 f() {
-  if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
+  # ---------------------------------------------------------------------------
+  # Help
+  # ---------------------------------------------------------------------------
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     cat <<'EOF'
 f — friendlier find
 
-Usage: f <pattern> [dir] [options]
+Usage: f <pattern> [dir] [options]    (direct mode)
+       f                               (interactive mode)
 
   pattern             Glob or substring (auto-wrapped in *…* if no wildcards)
   dir                 Directory to search (default: .)
 
 Options:
   -t TYPE    Type: f(ile), d(ir), l(ink)
-  -x CMD     Execute CMD on each match ({} = file path; appended if absent)
+  -x CMD     Execute CMD on each match ({} auto-appended if missing)
   -n DAYS    Modified within last DAYS days
   -d DEPTH   Max depth
   -s         Case-sensitive (default: insensitive)
   -1         First result only
+  -v         Show permission-denied paths (normally just a count)
   --delete   Delete matching files
-  --         Pass remaining args directly to find
+  -- CMD     Execute CMD on each match (same as -x, but at end of line)
 
 Examples:
   f "*.js"                Find all .js files
   f config -t d           Directories containing "config"
-  f "*.log" -x "rm {}"   Delete .log files
+  f "*.ttf" -- cat        Cat every .ttf file
+  f "*.log" -- rm         Delete .log files
   f todo /src -n 7        "todo" files modified in last 7 days
   f "*.pyc" --delete      Delete all .pyc files
   f readme -1             First file matching *readme*
@@ -621,22 +628,68 @@ EOF
     return 0
   fi
 
+  # ---------------------------------------------------------------------------
+  # Interactive mode (no args)
+  # ---------------------------------------------------------------------------
+  if [[ $# -eq 0 ]]; then
+    local _dir _pattern _exec_cmd _batch _ans
+
+    printf 'Directory to search [.]: ' >&2
+    read -r _dir </dev/tty
+    [[ -z "$_dir" ]] && _dir="."
+
+    printf 'File name pattern: ' >&2
+    read -r _pattern </dev/tty
+    if [[ -z "$_pattern" ]]; then
+      printf 'f: pattern cannot be empty\n' >&2
+      return 1
+    fi
+
+    printf 'Command to run (leave blank to just list; use {} for match path): ' >&2
+    read -r _exec_cmd </dev/tty
+
+    if [[ -n "$_exec_cmd" ]]; then
+      printf 'Run once per file, or batch all into one invocation?\n' >&2
+      printf '  1) Each file separately   (e.g. rm file1; rm file2; …)\n' >&2
+      printf '  2) All at once            (e.g. rm file1 file2 …)\n' >&2
+      printf 'Choice [1]: ' >&2
+      read -r _ans </dev/tty
+      [[ "$_ans" == "2" ]] && _batch=1 || _batch=0
+
+      # Build and run via direct mode
+      local -a _args=("$_pattern" "$_dir")
+      if (( _batch )); then
+        _args+=(-x+ "$_exec_cmd")
+      else
+        _args+=(-x "$_exec_cmd")
+      fi
+      f "${_args[@]}"
+    else
+      f "$_pattern" "$_dir"
+    fi
+    return
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Direct mode — parse args
+  # ---------------------------------------------------------------------------
   local pattern="" dir="." type_flag="" exec_cmd="" newer=""
-  local case_sensitive=0 delete=0 first_only=0 maxdepth=""
-  local -a extra_args=()
+  local case_sensitive=0 delete=0 first_only=0 maxdepth="" batch=0 verbose_errors=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -t) type_flag="$2"; shift 2 ;;
       -x) exec_cmd="$2"; shift 2 ;;
+      -x+) exec_cmd="$2"; batch=1; shift 2 ;;
       -n) newer="$2"; shift 2 ;;
       -d) maxdepth="$2"; shift 2 ;;
       -s) case_sensitive=1; shift ;;
       -1) first_only=1; shift ;;
+      -v) verbose_errors=1; shift ;;
       --delete) delete=1; shift ;;
-      --) shift; extra_args+=("$@"); break ;;
+      --) shift; exec_cmd="$*"; break ;;
       -*)
-        printf 'f: unknown option: %s (use -- to pass flags to find)\n' "$1" >&2
+        printf 'f: unknown option: %s\n' "$1" >&2
         return 1
         ;;
       *)
@@ -672,19 +725,69 @@ EOF
 
   [[ -n "$newer" ]] && cmd+=(-mtime "-${newer}")
 
-  (( ${#extra_args[@]} )) && cmd+=("${extra_args[@]}")
-
   if (( delete )); then
     cmd+=(-delete -print)
   elif [[ -n "$exec_cmd" ]]; then
     # Auto-append {} if the user left it out
     [[ "$exec_cmd" != *'{}'* ]] && exec_cmd="${exec_cmd} {}"
-    cmd+=(-exec ${=exec_cmd} \;)
+    cmd+=(-exec ${=exec_cmd})
+    if (( batch )); then
+      cmd+=(+)
+    else
+      cmd+=(\;)
+    fi
   fi
 
   (( first_only )) && cmd+=(-print -quit)
 
-  "${cmd[@]}"
+  # Run find, capture stderr to summarize permission errors
+  local _err_file="${TMPDIR:-/tmp}/f-err-$$.tmp"
+  local _exit=0
+
+  if [[ -t 1 ]]; then
+    # Interactive TTY: show live spinner + match count
+    local _count=0 _spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏') _si=0
+    while IFS= read -r _line; do
+      _count=$((_count + 1))
+      printf '\033[2K\r%s\n' "$_line"
+      printf '\r\033[90m%s %d found…\033[0m' "${_spin[$(( _si % 10 + 1 ))]}" "$_count" >&2
+      _si=$((_si + 1))
+    done < <("${cmd[@]}" 2>"$_err_file"; echo "__F_EXIT_$?" >&2)
+    # Clear spinner line
+    printf '\033[2K\r' >&2
+    # Extract exit code from the sentinel we appended to stderr
+    _exit=$(grep -o '__F_EXIT_[0-9]*' "$_err_file" 2>/dev/null | head -1 | sed 's/__F_EXIT_//')
+    _exit=${_exit:-0}
+    # Remove the sentinel from the error file
+    sed -i '' '/__F_EXIT_/d' "$_err_file" 2>/dev/null
+  else
+    # Piped: no decoration
+    "${cmd[@]}" 2>"$_err_file"
+    _exit=$?
+  fi
+
+  local _perm_count=0 _other_errs=""
+  if [[ -s "$_err_file" ]]; then
+    _perm_count=$(grep -c 'Permission denied\|Operation not permitted' "$_err_file" 2>/dev/null || echo 0)
+    _other_errs=$(grep -v 'Permission denied\|Operation not permitted' "$_err_file" 2>/dev/null || true)
+
+    # Print non-permission errors normally
+    [[ -n "$_other_errs" ]] && printf '%s\n' "$_other_errs" >&2
+
+    if (( _perm_count > 0 )); then
+      printf '\033[90m(%d paths not searchable — permission denied' "$_perm_count" >&2
+      if (( verbose_errors )); then
+        printf ':\033[0m\n' >&2
+        grep 'Permission denied\|Operation not permitted' "$_err_file" \
+          | sed 's/^find: /  /' | sed 's/: [A-Z].*$//' >&2
+      else
+        printf '; use -v to list)\033[0m\n' >&2
+      fi
+    fi
+  fi
+
+  rm -f "$_err_file"
+  return $_exit
 }
 
 # Locate a script inside the claude-multiagent plugin directory.
@@ -1079,7 +1182,7 @@ cls() { cl "$@"; }
 # clsl() — Self-contained launcher for Claude Code with a local model.
 #
 # On first run, automatically installs llama-server (via Homebrew), sets up a
-# Python venv with huggingface-cli, downloads the model GGUF, and starts the
+# downloads the model GGUF via curl (no account needed), and starts the
 # inference server. Subsequent runs reuse the existing setup.
 #
 # Subcommands:
@@ -1097,7 +1200,6 @@ clsl() {
   local _quant="${CLSL_QUANT:-Q4_K_M}"
   local _model_alias="${CLSL_MODEL_ALIAS:-qwen3-coder-next}"
   local _model_dir="$_home/models"
-  local _venv="$_home/venv"
   local _pidfile="$_home/server.pid"
   local _logfile="$_home/server.log"
 
@@ -1195,66 +1297,77 @@ HELP
   fi
 
   # ---------------------------------------------------------------------------
-  # 2. Ensure model is downloaded
+  # 2. Ensure model is downloaded (curl + jq, no account needed)
   # ---------------------------------------------------------------------------
   local _gguf_file=""
   _gguf_file=$(_clsl_find_gguf "$_model_dir" "$_quant") || true
 
   if [[ -z "$_gguf_file" ]]; then
-    # Need hf CLI — check system PATH then venv (newer versions use "hf",
-    # older versions use "huggingface-cli")
-    local _hf_cli=""
-    if command -v hf &>/dev/null; then
-      _hf_cli="hf"
-    elif command -v huggingface-cli &>/dev/null; then
-      _hf_cli="huggingface-cli"
-    elif [[ -x "$_venv/bin/hf" ]]; then
-      _hf_cli="$_venv/bin/hf"
-    elif [[ -x "$_venv/bin/huggingface-cli" ]]; then
-      _hf_cli="$_venv/bin/huggingface-cli"
-    else
-      printf '[clsl] Setting up huggingface-hub (in venv)...\n'
-      if command -v uv &>/dev/null; then
-        uv venv "$_venv" -q && \
-        uv pip install --python "$_venv/bin/python" -q huggingface-hub || {
-          unfunction _clsl_find_gguf 2>/dev/null; return 1
-        }
-      elif command -v python3 &>/dev/null; then
-        python3 -m venv "$_venv" && \
-        "$_venv/bin/pip" install -q huggingface-hub || {
-          unfunction _clsl_find_gguf 2>/dev/null; return 1
-        }
-      else
-        printf '[clsl] ERROR: python3 not found. Cannot install huggingface-hub.\n'
-        unfunction _clsl_find_gguf 2>/dev/null
-        return 1
-      fi
-      # Detect whichever entry point was installed
-      if [[ -x "$_venv/bin/hf" ]]; then
-        _hf_cli="$_venv/bin/hf"
-      elif [[ -x "$_venv/bin/huggingface-cli" ]]; then
-        _hf_cli="$_venv/bin/huggingface-cli"
-      else
-        printf '[clsl] ERROR: huggingface-hub installed but no CLI found in venv.\n'
-        unfunction _clsl_find_gguf 2>/dev/null
-        return 1
-      fi
-    fi
-
-    printf '[clsl] Downloading %s (quant: %s)...\n' "$_hf_repo" "$_quant"
-    printf '[clsl] This is a large model — the download may take a while.\n'
-    "$_hf_cli" download "$_hf_repo" \
-      --include "*${_quant}*" \
-      --local-dir "$_model_dir" || {
-      printf '[clsl] Download failed. Check CLSL_HF_REPO and CLSL_QUANT.\n'
+    if ! command -v jq &>/dev/null; then
+      printf '[clsl] ERROR: jq is required for model discovery. Install: brew install jq\n'
       unfunction _clsl_find_gguf 2>/dev/null
       return 1
-    }
+    fi
+
+    local _api="https://huggingface.co/api/models/${_hf_repo}/tree/main"
+
+    printf '[clsl] Looking up %s (quant: %s)...\n' "$_hf_repo" "$_quant"
+
+    # Find the directory matching the quant
+    local _quant_dir=""
+    _quant_dir=$(curl -sf "$_api" | jq -r ".[] | select(.path | test(\"${_quant}\")) | .path" 2>/dev/null | head -1)
+
+    if [[ -z "$_quant_dir" ]]; then
+      printf '[clsl] ERROR: No match for quant "%s" in %s\n' "$_quant" "$_hf_repo"
+      printf '       Available:\n'
+      curl -sf "$_api" | jq -r '.[] | select(.type == "directory") | "         " + .path' 2>/dev/null
+      unfunction _clsl_find_gguf 2>/dev/null
+      return 1
+    fi
+
+    # List GGUF shard files in that directory
+    local _file_list=""
+    _file_list=$(curl -sf "${_api}/${_quant_dir}" | jq -r '.[] | select(.path | endswith(".gguf")) | .path' 2>/dev/null)
+
+    if [[ -z "$_file_list" ]]; then
+      printf '[clsl] ERROR: No .gguf files found in %s/%s\n' "$_hf_repo" "$_quant_dir"
+      unfunction _clsl_find_gguf 2>/dev/null
+      return 1
+    fi
+
+    local _dl_dir="$_model_dir/$_quant_dir"
+    mkdir -p "$_dl_dir"
+
+    local _total=$(echo "$_file_list" | wc -l | tr -d ' ')
+    local _current=0
+
+    printf '[clsl] Downloading %d file(s) into %s\n' "$_total" "$_dl_dir"
+
+    while IFS= read -r _fpath; do
+      _current=$((_current + 1))
+      local _fname="${_fpath##*/}"
+      local _url="https://huggingface.co/${_hf_repo}/resolve/main/${_fpath}"
+      local _dest="$_dl_dir/$_fname"
+
+      if [[ -f "$_dest" ]]; then
+        printf '[clsl] [%d/%d] %s (exists, skipping)\n' "$_current" "$_total" "$_fname"
+        continue
+      fi
+
+      printf '[clsl] [%d/%d] %s\n' "$_current" "$_total" "$_fname"
+      # -C - resumes partial downloads from a previous attempt
+      curl -L -C - --progress-bar -o "$_dest.part" "$_url" || {
+        printf '[clsl] Download failed: %s\n' "$_fname"
+        printf '       Partial file kept at %s.part — will resume on next run.\n' "$_dest"
+        unfunction _clsl_find_gguf 2>/dev/null
+        return 1
+      }
+      mv "$_dest.part" "$_dest"
+    done <<< "$_file_list"
 
     _gguf_file=$(_clsl_find_gguf "$_model_dir" "$_quant") || true
     if [[ -z "$_gguf_file" ]]; then
-      printf '[clsl] ERROR: No .gguf files found after download in %s\n' "$_model_dir"
-      printf '       Try a different CLSL_QUANT or CLSL_HF_REPO.\n'
+      printf '[clsl] ERROR: No .gguf files found after download.\n'
       unfunction _clsl_find_gguf 2>/dev/null
       return 1
     fi
