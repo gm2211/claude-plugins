@@ -84,6 +84,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client \
         locales \
         fontconfig \
+        jq \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
