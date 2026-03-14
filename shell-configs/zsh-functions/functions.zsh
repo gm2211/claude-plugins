@@ -986,7 +986,7 @@ clauded() {
       printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
       docker sandbox rm "$_sandbox_name" 2>/dev/null
       _clauded_prompt_mounts
-      _clauded_sandbox_run -t "$_image" claude "$@"
+      _clauded_sandbox_run -t "$_image" -- claude "$@"
     else
       printf '\033[1;34m[clauded]\033[0m Found existing sandbox %s.\n' "$_sandbox_name"
 
@@ -1044,7 +1044,7 @@ clauded() {
         1)
           docker sandbox rm "$_sandbox_name" 2>/dev/null
           _clauded_prompt_mounts
-          _clauded_sandbox_run -t "$_image" claude "$@"
+          _clauded_sandbox_run -t "$_image" -- claude "$@"
           ;;
         *)
           printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
@@ -1055,7 +1055,7 @@ clauded() {
     fi
   else
     _clauded_prompt_mounts
-    _clauded_sandbox_run -t "$_image" claude "$@"
+    _clauded_sandbox_run -t "$_image" -- claude "$@"
   fi
 
   _clauded_cleanup
