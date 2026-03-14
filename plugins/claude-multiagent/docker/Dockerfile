@@ -377,4 +377,16 @@ ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
 ENV CLAUDE_ENV_FILE=/etc/sandbox-persistent.sh
 
+# ---------------------------------------------------------------------------
+# Entrypoint — run ensure-plugins.sh before the agent starts so that
+# credentials, settings, and configs are in place before Claude checks auth.
+# ---------------------------------------------------------------------------
+RUN cat > /home/agent/.local/bin/entrypoint.sh <<'EOENTRY'
+#!/bin/sh
+[ -x ~/.local/bin/ensure-plugins.sh ] && . ~/.local/bin/ensure-plugins.sh
+exec "$@"
+EOENTRY
+RUN chmod +x /home/agent/.local/bin/entrypoint.sh
+
 USER agent
+ENTRYPOINT ["/home/agent/.local/bin/entrypoint.sh"]
