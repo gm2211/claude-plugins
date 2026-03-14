@@ -62,7 +62,7 @@ fi
 FILLED=$((PCT * BAR_LEN / 100))
 [ "$FILLED" -gt "$BAR_LEN" ] && FILLED=$BAR_LEN
 EMPTY=$((BAR_LEN - FILLED))
-BAR="${BAR_COLOR}$(printf '%*s' "$FILLED" '' | tr ' ' '=')\033[90m$(printf '%*s' "$EMPTY" '' | tr ' ' '-')\033[0m"
+BAR="${BAR_COLOR}$(printf '%*s' "$FILLED" '' | tr ' ' '▮')\033[90m$(printf '%*s' "$EMPTY" '' | tr ' ' '─')\033[0m"
 
 # Cost
 COST_FMT=$(printf '$%.2f' "$COST")
