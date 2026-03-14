@@ -937,44 +937,41 @@ clauded() {
     fi
   }
 
-  # Helper: run docker sandbox with extra workspace mounts injected before
-  # any "--" separator in the args.  Extra mounts are read-only directories
-  # that should be available inside the sandbox (e.g. ~/projects/specify).
+  # Helper: run docker sandbox with extra workspace mounts.
+  # Syntax: _clauded_sandbox_run [flags...] -- [agent_args...]
+  # The agent is always "claude". Workspaces are injected automatically.
   _clauded_sandbox_run() {
-    local _pre=() _post=() _seen_sep=false
+    local _flags=() _agent_args=() _seen_sep=false
     for _a in "$@"; do
       if [[ "$_a" == "--" ]] && ! $_seen_sep; then
         _seen_sep=true
       elif $_seen_sep; then
-        _post+=("$_a")
+        _agent_args+=("$_a")
       else
-        _pre+=("$_a")
+        _flags+=("$_a")
       fi
     done
-    # Explicit primary workspace (rw) so extra mounts aren't mistaken for it
-    _pre+=(".")
-    # Mount host ~/.claude (credentials, CLAUDE.md, statusline) read-only
-    [ -d "$HOME/.claude" ] && _pre+=("$HOME/.claude:ro")
-    # Mount host gh CLI config (auth tokens for git push via HTTPS)
-    [ -d "$HOME/.config/gh" ] && _pre+=("$HOME/.config/gh:ro")
-    # Mount specify as read-only extra workspace if available
-    [ -d "$HOME/projects/specify" ] && _pre+=("$HOME/projects/specify:ro")
-    # Mount screenshots dir so host `ss` images are visible inside sandbox
+
+    # Build workspace list
+    local _workspaces=(".")
+    [ -d "$HOME/.claude" ] && _workspaces+=("$HOME/.claude:ro")
+    [ -d "$HOME/.config/gh" ] && _workspaces+=("$HOME/.config/gh:ro")
+    [ -d "$HOME/projects/specify" ] && _workspaces+=("$HOME/projects/specify:ro")
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
-    _pre+=("${_CLAUDE_SCREENSHOTS_DIR}:ro")
-    # Mount env file if present
-    [ -n "$_env_file" ] && [ -f "$_env_file" ] && _pre+=("$_env_file:ro")
-    # Append user-selected extra mounts
+    _workspaces+=("${_CLAUDE_SCREENSHOTS_DIR}:ro")
+    [ -n "$_env_file" ] && [ -f "$_env_file" ] && _workspaces+=("$_env_file:ro")
     for _m in "${_extra_mounts[@]}"; do
-      _pre+=("$_m")
+      _workspaces+=("$_m")
     done
-    if $_seen_sep; then
-      printf '\033[90m[clauded] docker sandbox run %s -- %s\033[0m\n' "${_pre[*]}" "${_post[*]}"
-      docker sandbox run "${_pre[@]}" -- "${_post[@]}"
-    else
-      printf '\033[90m[clauded] docker sandbox run %s\033[0m\n' "${_pre[*]}"
-      docker sandbox run "${_pre[@]}"
+
+    # docker sandbox run [flags] AGENT WORKSPACE... [-- AGENT_ARGS...]
+    local _cmd=(docker sandbox run "${_flags[@]}" claude "${_workspaces[@]}")
+    if [ ${#_agent_args[@]} -gt 0 ]; then
+      _cmd+=(-- "${_agent_args[@]}")
     fi
+
+    printf '\033[90m[clauded] %s\033[0m\n' "${_cmd[*]}"
+    "${_cmd[@]}"
   }
 
   # Derive the sandbox name docker would use for this workspace
@@ -986,7 +983,7 @@ clauded() {
       printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
       docker sandbox rm "$_sandbox_name" 2>/dev/null
       _clauded_prompt_mounts
-      _clauded_sandbox_run -t "$_image" -- claude "$@"
+      _clauded_sandbox_run -t "$_image" -- "$@"
     else
       printf '\033[1;34m[clauded]\033[0m Found existing sandbox %s.\n' "$_sandbox_name"
 
@@ -1044,7 +1041,7 @@ clauded() {
         1)
           docker sandbox rm "$_sandbox_name" 2>/dev/null
           _clauded_prompt_mounts
-          _clauded_sandbox_run -t "$_image" -- claude "$@"
+          _clauded_sandbox_run -t "$_image" -- "$@"
           ;;
         *)
           printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
@@ -1055,7 +1052,7 @@ clauded() {
     fi
   else
     _clauded_prompt_mounts
-    _clauded_sandbox_run -t "$_image" -- claude "$@"
+    _clauded_sandbox_run -t "$_image" -- "$@"
   fi
 
   _clauded_cleanup
@@ -1190,14 +1187,19 @@ HELP
   _gguf_file=$(_clsl_find_gguf "$_model_dir" "$_quant") || true
 
   if [[ -z "$_gguf_file" ]]; then
-    # Need huggingface-cli — install in venv if not already available
+    # Need hf CLI — check system PATH then venv (newer versions use "hf",
+    # older versions use "huggingface-cli")
     local _hf_cli=""
-    if command -v huggingface-cli &>/dev/null; then
+    if command -v hf &>/dev/null; then
+      _hf_cli="hf"
+    elif command -v huggingface-cli &>/dev/null; then
       _hf_cli="huggingface-cli"
+    elif [[ -x "$_venv/bin/hf" ]]; then
+      _hf_cli="$_venv/bin/hf"
     elif [[ -x "$_venv/bin/huggingface-cli" ]]; then
       _hf_cli="$_venv/bin/huggingface-cli"
     else
-      printf '[clsl] Setting up huggingface-cli (in venv)...\n'
+      printf '[clsl] Setting up huggingface-hub (in venv)...\n'
       if command -v uv &>/dev/null; then
         uv venv "$_venv" -q && \
         uv pip install --python "$_venv/bin/python" -q huggingface-hub || {
@@ -1209,11 +1211,20 @@ HELP
           unfunction _clsl_find_gguf 2>/dev/null; return 1
         }
       else
-        printf '[clsl] ERROR: python3 not found. Cannot install huggingface-cli.\n'
+        printf '[clsl] ERROR: python3 not found. Cannot install huggingface-hub.\n'
         unfunction _clsl_find_gguf 2>/dev/null
         return 1
       fi
-      _hf_cli="$_venv/bin/huggingface-cli"
+      # Detect whichever entry point was installed
+      if [[ -x "$_venv/bin/hf" ]]; then
+        _hf_cli="$_venv/bin/hf"
+      elif [[ -x "$_venv/bin/huggingface-cli" ]]; then
+        _hf_cli="$_venv/bin/huggingface-cli"
+      else
+        printf '[clsl] ERROR: huggingface-hub installed but no CLI found in venv.\n'
+        unfunction _clsl_find_gguf 2>/dev/null
+        return 1
+      fi
     fi
 
     printf '[clsl] Downloading %s (quant: %s)...\n' "$_hf_repo" "$_quant"
