@@ -274,6 +274,17 @@ if [ -n "$HOST_CLAUDE_DIR" ] && [ "$HOST_CLAUDE_DIR" != "$HOME/.claude" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# gh CLI config (mounted read-only by clauded from host ~/.config/gh)
+# Enables git push via HTTPS without re-authenticating each session.
+# ---------------------------------------------------------------------------
+HOST_GH_DIR=$(find /Users /home -maxdepth 4 -path "*/.config/gh/hosts.yml" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+if [ -n "$HOST_GH_DIR" ] && [ "$HOST_GH_DIR" != "$HOME/.config/gh" ]; then
+  mkdir -p "$HOME/.config/gh"
+  cp "$HOST_GH_DIR"/*.yml "$HOME/.config/gh/" 2>/dev/null
+  chmod 600 "$HOME/.config/gh"/*.yml 2>/dev/null
+fi
+
 # Env vars passed via clauded -e KEY=VALUE (mounted as temp file)
 ENV_FILE=$(find /var/folders /tmp -maxdepth 2 -name "clauded-env.*" -type f 2>/dev/null | head -1)
 if [ -n "$ENV_FILE" ] && ! grep -qF "# clauded-env-loaded" "${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}" 2>/dev/null; then

@@ -955,6 +955,8 @@ clauded() {
     _pre+=(".")
     # Mount host ~/.claude (credentials, CLAUDE.md, statusline) read-only
     [ -d "$HOME/.claude" ] && _pre+=("$HOME/.claude:ro")
+    # Mount host gh CLI config (auth tokens for git push via HTTPS)
+    [ -d "$HOME/.config/gh" ] && _pre+=("$HOME/.config/gh:ro")
     # Mount specify as read-only extra workspace if available
     [ -d "$HOME/projects/specify" ] && _pre+=("$HOME/projects/specify:ro")
     # Mount screenshots dir so host `ss` images are visible inside sandbox
