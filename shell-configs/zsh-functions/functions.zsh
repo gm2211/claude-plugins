@@ -4,6 +4,7 @@
 _CLAUDE_SCREENSHOTS_DIR="/tmp/claude-screenshots"
 
 alias nv='nvim'
+alias sp='cd ~/projects/specify'
 
 # ZLE word-navigation bindings for Kitty + Zellij
 # Kitty sends Alt+Left/Right as CSI 1;3D/C; map those to word motion in Zsh.
@@ -563,6 +564,129 @@ wt() {
   esac
 }
 
+# f() — Friendlier find.
+#
+# Addresses the main find annoyances: no -name/-iname flag needed (first arg
+# is the pattern), case-insensitive by default, auto-wraps bare words in
+# wildcards, and -x replaces the -exec {} \; dance.
+#
+#   f pattern [dir] [options]
+#
+# Options:
+#   -t TYPE    File type: f(ile), d(ir), l(ink)
+#   -x CMD     Execute CMD on each match ({} = match path, auto-appended if missing)
+#   -n DAYS    Modified within last DAYS days
+#   -d DEPTH   Max directory depth
+#   -s         Case-sensitive (default: case-insensitive)
+#   -1         Stop after first match
+#   --delete   Delete matching files
+#   --         Pass remaining args directly to find
+#
+# Examples:
+#   f "*.js"                Find all .js files
+#   f config -t d           Find directories containing "config"
+#   f "*.log" -x "rm {}"   Find .log files and delete them
+#   f todo /src -n 7        Files with "todo" modified in last 7 days
+#   f "*.pyc" --delete      Delete all .pyc files
+#   f readme -1             First file matching *readme*
+
+f() {
+  if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
+    cat <<'EOF'
+f — friendlier find
+
+Usage: f <pattern> [dir] [options]
+
+  pattern             Glob or substring (auto-wrapped in *…* if no wildcards)
+  dir                 Directory to search (default: .)
+
+Options:
+  -t TYPE    Type: f(ile), d(ir), l(ink)
+  -x CMD     Execute CMD on each match ({} = file path; appended if absent)
+  -n DAYS    Modified within last DAYS days
+  -d DEPTH   Max depth
+  -s         Case-sensitive (default: insensitive)
+  -1         First result only
+  --delete   Delete matching files
+  --         Pass remaining args directly to find
+
+Examples:
+  f "*.js"                Find all .js files
+  f config -t d           Directories containing "config"
+  f "*.log" -x "rm {}"   Delete .log files
+  f todo /src -n 7        "todo" files modified in last 7 days
+  f "*.pyc" --delete      Delete all .pyc files
+  f readme -1             First file matching *readme*
+EOF
+    return 0
+  fi
+
+  local pattern="" dir="." type_flag="" exec_cmd="" newer=""
+  local case_sensitive=0 delete=0 first_only=0 maxdepth=""
+  local -a extra_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -t) type_flag="$2"; shift 2 ;;
+      -x) exec_cmd="$2"; shift 2 ;;
+      -n) newer="$2"; shift 2 ;;
+      -d) maxdepth="$2"; shift 2 ;;
+      -s) case_sensitive=1; shift ;;
+      -1) first_only=1; shift ;;
+      --delete) delete=1; shift ;;
+      --) shift; extra_args+=("$@"); break ;;
+      -*)
+        printf 'f: unknown option: %s (use -- to pass flags to find)\n' "$1" >&2
+        return 1
+        ;;
+      *)
+        if [[ -z "$pattern" ]]; then
+          pattern="$1"
+        elif [[ -d "$1" ]]; then
+          dir="$1"
+        else
+          dir="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  # Auto-wrap bare words in wildcards
+  if [[ -n "$pattern" && "$pattern" != *'*'* && "$pattern" != *'?'* && "$pattern" != *'['* ]]; then
+    pattern="*${pattern}*"
+  fi
+
+  local -a cmd=(find "$dir")
+
+  [[ -n "$maxdepth" ]] && cmd+=(-maxdepth "$maxdepth")
+  [[ -n "$type_flag" ]] && cmd+=(-type "$type_flag")
+
+  if [[ -n "$pattern" ]]; then
+    if (( case_sensitive )); then
+      cmd+=(-name "$pattern")
+    else
+      cmd+=(-iname "$pattern")
+    fi
+  fi
+
+  [[ -n "$newer" ]] && cmd+=(-mtime "-${newer}")
+
+  (( ${#extra_args[@]} )) && cmd+=("${extra_args[@]}")
+
+  if (( delete )); then
+    cmd+=(-delete -print)
+  elif [[ -n "$exec_cmd" ]]; then
+    # Auto-append {} if the user left it out
+    [[ "$exec_cmd" != *'{}'* ]] && exec_cmd="${exec_cmd} {}"
+    cmd+=(-exec ${=exec_cmd} \;)
+  fi
+
+  (( first_only )) && cmd+=(-print -quit)
+
+  "${cmd[@]}"
+}
+
 # Locate a script inside the claude-multiagent plugin directory.
 # Searches the marketplace install path (stable across versions).
 _find_multiagent_script() {
@@ -608,7 +732,7 @@ _claude_launch() {
 #
 # Compatible with bash and zsh.
 
-claude() {
+cl() {
   #############################################################################
   # --skip / -s flag: bypass worktree check and disable multiagent plugin
   #############################################################################
@@ -720,12 +844,14 @@ clauded() {
   local _rebuild=false
   local _mount=false
   local _extra_mounts=()
+  local _env_vars=()
 
   # Parse flags
   while [[ "$1" == --* || "$1" == -* ]]; do
     case "$1" in
       --rebuild)  _rebuild=true; shift ;;
       --mount|-m) _mount=true; shift ;;
+      -e)         shift; _env_vars+=("$1"); shift ;;
       *) break ;;
     esac
   done
@@ -739,16 +865,17 @@ clauded() {
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   fi
 
-  # Stage host ~/.claude config files into the workspace so the sandbox can
-  # pick them up (Docker Sandbox preserves host paths, so $PWD is the same
-  # inside the sandbox).  ensure-plugins.sh handles the install at startup.
-  local _mount_dir="$PWD/.claude-sandbox-mount"
-  mkdir -p "$_mount_dir"
-  [ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$_mount_dir/"
-  [ -f "$HOME/.claude/statusline.sh" ] && cp "$HOME/.claude/statusline.sh" "$_mount_dir/"
+  # Write env vars to a temp file for ensure-plugins.sh to source inside sandbox
+  local _env_file=""
+  if [ ${#_env_vars[@]} -gt 0 ]; then
+    _env_file="$(mktemp -t clauded-env.XXXXXX)"
+    for _ev in "${_env_vars[@]}"; do
+      printf 'export %s\n' "$_ev"
+    done > "$_env_file"
+  fi
 
-  # Cleanup helper — remove staging dir when clauded exits
-  _clauded_cleanup() { rm -rf "$_mount_dir" 2>/dev/null; }
+  # Cleanup helper
+  _clauded_cleanup() { [ -n "$_env_file" ] && rm -f "$_env_file" 2>/dev/null; }
   trap '_clauded_cleanup' EXIT INT TERM
 
   # -------------------------------------------------------------------------
@@ -768,13 +895,22 @@ clauded() {
       if command -v fzf >/dev/null 2>&1; then
         printf '\033[90m  Tab=toggle  Enter=confirm  Esc=skip\033[0m\n'
         local _selected
+        # Search directories likely to contain projects; fall back to $HOME
+        local _search_roots=()
+        for _r in "$HOME/projects" "$HOME/src" "$HOME/work" "$HOME/repos"; do
+          [ -d "$_r" ] && _search_roots+=("$_r")
+        done
+        [ ${#_search_roots[@]} -eq 0 ] && _search_roots=("$HOME")
         _selected=$(
-          find "$HOME" -maxdepth 4 -type d \
+          find "${_search_roots[@]}" -maxdepth 3 -type d \
             -not -path '*/\.*' \
             -not -path '*/node_modules/*' \
             -not -path '*/venv/*' \
+            -not -path '*/.venv/*' \
             -not -path '*/__pycache__/*' \
-            -not -path '*/Library/*' \
+            -not -path '*/target/*' \
+            -not -path '*/build/*' \
+            -not -path '*/.worktrees/*' \
             2>/dev/null \
           | sed "s|^$HOME|~|" \
           | sort \
@@ -782,7 +918,7 @@ clauded() {
                 --height=~60% \
                 --reverse \
                 --prompt="Select directories to mount (ro): " \
-                --header="Browse ~ — Tab to toggle, Enter to confirm" \
+                --header="Tab=toggle  Enter=confirm  Esc=skip" \
                 --preview="ls -lhF --color=always \$(echo {} | sed \"s|^~|$HOME|\")" \
                 --preview-window=right:40% \
             2>/dev/null
@@ -817,22 +953,24 @@ clauded() {
     done
     # Explicit primary workspace (rw) so extra mounts aren't mistaken for it
     _pre+=(".")
-    # Mount specify if available and not already owned by another sandbox
-    if [ -d "$HOME/projects/specify" ]; then
-      if ! docker sandbox ls 2>/dev/null | awk 'NR>1 {print $NF}' | grep -qx "$HOME/projects/specify"; then
-        _pre+=("$HOME/projects/specify:ro")
-      fi
-    fi
+    # Mount host ~/.claude (credentials, CLAUDE.md, statusline) read-only
+    [ -d "$HOME/.claude" ] && _pre+=("$HOME/.claude:ro")
+    # Mount specify as read-only extra workspace if available
+    [ -d "$HOME/projects/specify" ] && _pre+=("$HOME/projects/specify:ro")
     # Mount screenshots dir so host `ss` images are visible inside sandbox
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
     _pre+=("${_CLAUDE_SCREENSHOTS_DIR}:ro")
+    # Mount env file if present
+    [ -n "$_env_file" ] && [ -f "$_env_file" ] && _pre+=("$_env_file:ro")
     # Append user-selected extra mounts
     for _m in "${_extra_mounts[@]}"; do
       _pre+=("$_m")
     done
     if $_seen_sep; then
+      printf '\033[90m[clauded] docker sandbox run %s -- %s\033[0m\n' "${_pre[*]}" "${_post[*]}"
       docker sandbox run "${_pre[@]}" -- "${_post[@]}"
     else
+      printf '\033[90m[clauded] docker sandbox run %s\033[0m\n' "${_pre[*]}"
       docker sandbox run "${_pre[@]}"
     fi
   }
@@ -920,4 +1058,227 @@ clauded() {
 
   _clauded_cleanup
   unfunction _clauded_sandbox_run _clauded_prompt_mounts 2>/dev/null
+}
+
+# cls() — alias for cl() (convenience shorthand)
+cls() { cl "$@"; }
+
+# clsl() — Self-contained launcher for Claude Code with a local model.
+#
+# On first run, automatically installs llama-server (via Homebrew), sets up a
+# Python venv with huggingface-cli, downloads the model GGUF, and starts the
+# inference server. Subsequent runs reuse the existing setup.
+#
+# Subcommands:
+#   clsl              Launch Claude with local model (auto-setup on first run)
+#   clsl stop         Stop the background llama-server
+#   clsl status       Check if the server is running
+#   clsl logs         View server logs
+#   clsl help         Show configuration options
+#
+# All state lives under CLSL_HOME (default: ~/.local/share/clsl).
+clsl() {
+  local _home="${CLSL_HOME:-$HOME/.local/share/clsl}"
+  local _port="${CLSL_PORT:-8080}"
+  local _hf_repo="${CLSL_HF_REPO:-Qwen/Qwen3-Coder-Next-GGUF}"
+  local _quant="${CLSL_QUANT:-Q4_K_M}"
+  local _model_alias="${CLSL_MODEL_ALIAS:-qwen3-coder-next}"
+  local _model_dir="$_home/models"
+  local _venv="$_home/venv"
+  local _pidfile="$_home/server.pid"
+  local _logfile="$_home/server.log"
+
+  # ---------------------------------------------------------------------------
+  # Subcommands
+  # ---------------------------------------------------------------------------
+  case "${1:-}" in
+    stop)
+      if [[ -f "$_pidfile" ]] && kill -0 "$(cat "$_pidfile")" 2>/dev/null; then
+        kill "$(cat "$_pidfile")" && rm -f "$_pidfile"
+        printf '[clsl] Server stopped.\n'
+      else
+        printf '[clsl] No running server found.\n'
+        rm -f "$_pidfile"
+      fi
+      return 0
+      ;;
+    status)
+      if curl -sf "http://localhost:$_port/health" &>/dev/null; then
+        printf '[clsl] Server running on port %s\n' "$_port"
+      else
+        printf '[clsl] Server not running.\n'
+      fi
+      return 0
+      ;;
+    logs)
+      if [[ -f "$_logfile" ]]; then
+        ${PAGER:-less} "$_logfile"
+      else
+        printf '[clsl] No log file at %s\n' "$_logfile"
+      fi
+      return 0
+      ;;
+    help|--help|-h)
+      cat <<'HELP'
+clsl — self-contained local Claude with Qwen3-Coder-Next
+
+Subcommands:
+  clsl              Launch Claude with local model
+  clsl stop         Stop the background llama-server
+  clsl status       Check if server is running
+  clsl logs         View server logs
+  clsl help         Show this help
+
+Environment variables (all optional):
+  CLSL_HOME          Data directory     (default: ~/.local/share/clsl)
+  CLSL_PORT          Server port        (default: 8080)
+  CLSL_HF_REPO      HuggingFace repo   (default: Qwen/Qwen3-Coder-Next-GGUF)
+  CLSL_QUANT         Quantization       (default: Q4_K_M)
+  CLSL_MODEL_ALIAS   Model name for API (default: qwen3-coder-next)
+  CLSL_SERVER_ARGS   Extra llama-server flags (space-separated)
+HELP
+      return 0
+      ;;
+  esac
+
+  mkdir -p "$_home" "$_model_dir"
+
+  # ---------------------------------------------------------------------------
+  # Helper: find GGUF file matching the current quantization.
+  # Handles single files and sharded (split) GGUFs.
+  # ---------------------------------------------------------------------------
+  _clsl_find_gguf() {
+    local dir="$1" quant="$2" f=""
+    # Single (non-sharded) file matching the quant
+    f=$(find "$dir" -name "*${quant}*.gguf" -not -name "*-of-*" 2>/dev/null | head -1)
+    [[ -n "$f" ]] && printf '%s' "$f" && return 0
+    # First shard of a split GGUF
+    f=$(find "$dir" -name "*${quant}*-00001-of-*.gguf" 2>/dev/null | head -1)
+    [[ -n "$f" ]] && printf '%s' "$f" && return 0
+    # Any GGUF matching the quant (fallback)
+    f=$(find "$dir" -name "*${quant}*.gguf" 2>/dev/null | sort | head -1)
+    [[ -n "$f" ]] && printf '%s' "$f" && return 0
+    return 1
+  }
+
+  # ---------------------------------------------------------------------------
+  # 1. Ensure llama-server is available
+  # ---------------------------------------------------------------------------
+  local _server=""
+  if command -v llama-server &>/dev/null; then
+    _server="llama-server"
+  elif [[ -x "$_home/bin/llama-server" ]]; then
+    _server="$_home/bin/llama-server"
+  else
+    printf '[clsl] llama-server not found. Installing via Homebrew...\n'
+    if ! command -v brew &>/dev/null; then
+      printf '[clsl] ERROR: Homebrew not found. Install llama.cpp manually:\n'
+      printf '       https://github.com/ggml-org/llama.cpp#build\n'
+      unfunction _clsl_find_gguf 2>/dev/null
+      return 1
+    fi
+    brew install llama.cpp || { unfunction _clsl_find_gguf 2>/dev/null; return 1; }
+    _server="llama-server"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # 2. Ensure model is downloaded
+  # ---------------------------------------------------------------------------
+  local _gguf_file=""
+  _gguf_file=$(_clsl_find_gguf "$_model_dir" "$_quant") || true
+
+  if [[ -z "$_gguf_file" ]]; then
+    # Need huggingface-cli — install in venv if not already available
+    local _hf_cli=""
+    if command -v huggingface-cli &>/dev/null; then
+      _hf_cli="huggingface-cli"
+    elif [[ -x "$_venv/bin/huggingface-cli" ]]; then
+      _hf_cli="$_venv/bin/huggingface-cli"
+    else
+      printf '[clsl] Setting up huggingface-cli (in venv)...\n'
+      if command -v uv &>/dev/null; then
+        uv venv "$_venv" -q && \
+        uv pip install --python "$_venv/bin/python" -q huggingface-hub || {
+          unfunction _clsl_find_gguf 2>/dev/null; return 1
+        }
+      elif command -v python3 &>/dev/null; then
+        python3 -m venv "$_venv" && \
+        "$_venv/bin/pip" install -q huggingface-hub || {
+          unfunction _clsl_find_gguf 2>/dev/null; return 1
+        }
+      else
+        printf '[clsl] ERROR: python3 not found. Cannot install huggingface-cli.\n'
+        unfunction _clsl_find_gguf 2>/dev/null
+        return 1
+      fi
+      _hf_cli="$_venv/bin/huggingface-cli"
+    fi
+
+    printf '[clsl] Downloading %s (quant: %s)...\n' "$_hf_repo" "$_quant"
+    printf '[clsl] This is a large model — the download may take a while.\n'
+    "$_hf_cli" download "$_hf_repo" \
+      --include "*${_quant}*" \
+      --local-dir "$_model_dir" || {
+      printf '[clsl] Download failed. Check CLSL_HF_REPO and CLSL_QUANT.\n'
+      unfunction _clsl_find_gguf 2>/dev/null
+      return 1
+    }
+
+    _gguf_file=$(_clsl_find_gguf "$_model_dir" "$_quant") || true
+    if [[ -z "$_gguf_file" ]]; then
+      printf '[clsl] ERROR: No .gguf files found after download in %s\n' "$_model_dir"
+      printf '       Try a different CLSL_QUANT or CLSL_HF_REPO.\n'
+      unfunction _clsl_find_gguf 2>/dev/null
+      return 1
+    fi
+    printf '[clsl] Model ready: %s\n' "$_gguf_file"
+  fi
+
+  unfunction _clsl_find_gguf 2>/dev/null
+
+  # ---------------------------------------------------------------------------
+  # 3. Ensure server is running
+  # ---------------------------------------------------------------------------
+  if ! curl -sf "http://localhost:$_port/health" &>/dev/null; then
+    # Clean stale PID file
+    if [[ -f "$_pidfile" ]] && ! kill -0 "$(cat "$_pidfile")" 2>/dev/null; then
+      rm -f "$_pidfile"
+    fi
+
+    printf '[clsl] Starting llama-server on :%s...\n' "$_port"
+    "$_server" \
+      -m "$_gguf_file" \
+      --port "$_port" \
+      --alias "$_model_alias" \
+      ${=CLSL_SERVER_ARGS} \
+      > "$_logfile" 2>&1 &
+    echo $! > "$_pidfile"
+    disown
+
+    printf '[clsl] Loading model (this may take a minute)...'
+    local _tries=120
+    while ! curl -sf "http://localhost:$_port/health" &>/dev/null; do
+      _tries=$((_tries - 1))
+      if [[ $_tries -le 0 ]]; then
+        printf '\n[clsl] Server failed to start after 2 min. See: %s\n' "$_logfile"
+        return 1
+      fi
+      printf '.'
+      sleep 1
+    done
+    printf ' ready!\n'
+  fi
+
+  # ---------------------------------------------------------------------------
+  # 4. Launch Claude
+  # ---------------------------------------------------------------------------
+  if type cl &>/dev/null; then
+    OPENAI_API_KEY="local" \
+    OPENAI_BASE_URL="http://localhost:$_port/v1" \
+    cl --model "openai:$_model_alias" "$@"
+  else
+    OPENAI_API_KEY="local" \
+    OPENAI_BASE_URL="http://localhost:$_port/v1" \
+    command claude --model "openai:$_model_alias" "$@"
+  fi
 }

@@ -253,27 +253,45 @@ SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
 # ---------------------------------------------------------------------------
-# Install host-mounted config files from .claude-sandbox-mount/
-# (staged by clauded() on the host before sandbox launch)
+# Install host-mounted config files from ~/.claude (mounted read-only by clauded)
+# The host ~/.claude dir is mounted at its original path (e.g. /Users/<user>/.claude).
 # ---------------------------------------------------------------------------
-MOUNT_DIR=$(find /Users /home -maxdepth 6 -name ".claude-sandbox-mount" -type d 2>/dev/null | head -1)
-if [ -n "$MOUNT_DIR" ]; then
-  # Global CLAUDE.md → ~/.claude/CLAUDE.md
-  if [ -f "$MOUNT_DIR/CLAUDE.md" ]; then
-    cp "$MOUNT_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+HOST_CLAUDE_DIR=$(find /Users /home -maxdepth 3 -path "*/.claude/.credentials.json" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+if [ -n "$HOST_CLAUDE_DIR" ] && [ "$HOST_CLAUDE_DIR" != "$HOME/.claude" ]; then
+  # Credentials → avoids re-auth each session
+  if [ -f "$HOST_CLAUDE_DIR/.credentials.json" ]; then
+    cp "$HOST_CLAUDE_DIR/.credentials.json" "$HOME/.claude/.credentials.json"
+    chmod 600 "$HOME/.claude/.credentials.json"
   fi
-  # Host statusline script → overwrite the baked-in one
-  if [ -f "$MOUNT_DIR/statusline.sh" ]; then
-    cp "$MOUNT_DIR/statusline.sh" "$HOME/.config/claude-status-line/statusline.sh"
+  # Global CLAUDE.md
+  if [ -f "$HOST_CLAUDE_DIR/CLAUDE.md" ]; then
+    cp "$HOST_CLAUDE_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+  fi
+  # Statusline script
+  if [ -f "$HOST_CLAUDE_DIR/statusline.sh" ]; then
+    cp "$HOST_CLAUDE_DIR/statusline.sh" "$HOME/.config/claude-status-line/statusline.sh"
     chmod +x "$HOME/.config/claude-status-line/statusline.sh"
   fi
 fi
 
+# Env vars passed via clauded -e KEY=VALUE (mounted as temp file)
+ENV_FILE=$(find /var/folders /tmp -maxdepth 2 -name "clauded-env.*" -type f 2>/dev/null | head -1)
+if [ -n "$ENV_FILE" ] && ! grep -qF "# clauded-env-loaded" "${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}" 2>/dev/null; then
+  . "$ENV_FILE"
+  PERSISTENT_ENV="${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}"
+  if [ -f "$PERSISTENT_ENV" ]; then
+    grep -v '^#!' "$ENV_FILE" >> "$PERSISTENT_ENV"
+    printf '# clauded-env-loaded\n' >> "$PERSISTENT_ENV"
+  fi
+fi
+
 # sp (specify) — symlink if the workspace is mounted
-SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
-if [ -n "$SP_RUN" ]; then
-  mkdir -p "$HOME/.local/bin"
-  ln -sf "$SP_RUN" "$HOME/.local/bin/sp"
+if [ ! -x "$HOME/.local/bin/sp" ]; then
+  SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
+  if [ -n "$SP_RUN" ]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$SP_RUN" "$HOME/.local/bin/sp"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -297,6 +315,7 @@ else
     sed -i 's/}$/,"statusLine":{"type":"command","command":"~\/.config\/claude-status-line\/statusline.sh"}}/' "$SETTINGS"
   fi
 fi
+
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 
@@ -323,6 +342,20 @@ RUN git config --system credential.helper '!/usr/bin/gh auth git-credential' \
 RUN chown -R agent:agent /home/agent
 
 # ---------------------------------------------------------------------------
+# Persistent env file — sourced by Claude's bash tool via CLAUDE_ENV_FILE
+# and by ensure-plugins.sh at zsh startup.  Includes PATH so that tools
+# installed to ~/.local/bin (e.g. sp) are available to Claude.
+# ---------------------------------------------------------------------------
+RUN printf '%s\n' \
+      'export PATH="$HOME/.local/bin:$PATH"' \
+      'if [ ! -f /tmp/.ensure-plugins-done ] && [ -x ~/.local/bin/ensure-plugins.sh ]; then' \
+      '  . ~/.local/bin/ensure-plugins.sh' \
+      '  touch /tmp/.ensure-plugins-done' \
+      'fi' \
+    > /etc/sandbox-persistent.sh \
+    && chmod 666 /etc/sandbox-persistent.sh
+
+# ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
 ENV LANG=en_US.UTF-8
@@ -330,5 +363,6 @@ ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
+ENV CLAUDE_ENV_FILE=/etc/sandbox-persistent.sh
 
 USER agent
