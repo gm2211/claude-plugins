@@ -1009,6 +1009,24 @@ clauded() {
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   fi
 
+  # Keep specify up to date (once per day, same logic as the sp function)
+  if [ -d "$HOME/projects/specify/.git" ]; then
+    local _sp_stamp="$HOME/projects/specify/.last-update-check"
+    local _now=$(date +%s)
+    local _last=0
+    [ -f "$_sp_stamp" ] && _last=$(<"$_sp_stamp")
+    if (( _now - _last > 86400 )); then
+      printf '\033[90m[clauded] checking specify for updates...\033[0m\n'
+      git -C "$HOME/projects/specify" fetch --quiet 2>/dev/null
+      local _behind=$(git -C "$HOME/projects/specify" rev-list --count HEAD..@{u} 2>/dev/null)
+      if [ -n "$_behind" ] && [ "$_behind" -gt 0 ] 2>/dev/null; then
+        printf '\033[1;33m[clauded]\033[0m specify is %d commit(s) behind. Pulling...\n' "$_behind"
+        git -C "$HOME/projects/specify" pull --ff-only --quiet 2>/dev/null
+      fi
+      printf '%s' "$_now" > "$_sp_stamp"
+    fi
+  fi
+
   # Auto-inject OAuth token if not already provided and no .credentials.json on host.
   # Newer Claude Code on macOS stores credentials in the system Keychain, so the
   # old approach of copying .credentials.json into the sandbox no longer works.
