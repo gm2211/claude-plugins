@@ -4,7 +4,48 @@
 _CLAUDE_SCREENSHOTS_DIR="/tmp/claude-screenshots"
 
 alias nv='nvim'
-alias sp='cd ~/projects/specify'
+# sp — wrapper for ~/projects/specify/specify
+# Clones the repo if missing; periodically pulls updates (once per day).
+sp() {
+  local _sp_dir="$HOME/projects/specify"
+  local _sp_bin="$_sp_dir/specify"
+  local _sp_stamp="$_sp_dir/.last-update-check"
+
+  # Clone if missing
+  if [ ! -d "$_sp_dir" ]; then
+    printf '\033[1;33m[sp]\033[0m specify not found at %s\n' "$_sp_dir"
+    printf '\033[1;34m[sp]\033[0m Clone from gm2211/specify? [Y/n] '
+    read -rsk1 _ans
+    printf '\n'
+    if [[ "$_ans" == [nN] ]]; then
+      printf '\033[1;34m[sp]\033[0m Cancelled.\n'
+      return 1
+    fi
+    git clone https://github.com/gm2211/specify.git "$_sp_dir" || return 1
+  fi
+
+  # Periodic update check (at most once per day)
+  local _now=$(date +%s)
+  local _last=0
+  [ -f "$_sp_stamp" ] && _last=$(<"$_sp_stamp")
+  if (( _now - _last > 86400 )); then
+    printf '\033[90m[sp] checking for updates...\033[0m\n'
+    git -C "$_sp_dir" fetch --quiet 2>/dev/null
+    local _behind=$(git -C "$_sp_dir" rev-list --count HEAD..@{u} 2>/dev/null)
+    if [ -n "$_behind" ] && [ "$_behind" -gt 0 ] 2>/dev/null; then
+      printf '\033[1;33m[sp]\033[0m %d commit(s) behind remote. Pulling...\n' "$_behind"
+      git -C "$_sp_dir" pull --ff-only --quiet 2>/dev/null
+    fi
+    printf '%s' "$_now" > "$_sp_stamp"
+  fi
+
+  if [ ! -x "$_sp_bin" ]; then
+    printf '\033[1;31m[sp]\033[0m specify binary not found at %s\n' "$_sp_bin"
+    return 1
+  fi
+
+  "$_sp_bin" "$@"
+}
 
 # ZLE word-navigation bindings for Kitty + Zellij
 # Kitty sends Alt+Left/Right as CSI 1;3D/C; map those to word motion in Zsh.
