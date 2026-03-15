@@ -10,16 +10,14 @@ This directory contains portable shell functions to be sourced from `~/.zshrc`.
    brew install pngpaste
    ```
 
-2. **Copy `functions.zsh` to your config directory:**
+2. **Symlink `functions.zsh` to your config directory:**
 
-   ```bash
-   cp /path/to/claude-plugins/shell-configs/zsh-functions/functions.zsh ~/.config/zsh/functions.zsh
-   ```
-
-   Create the `~/.config/zsh` directory if it doesn't exist:
    ```bash
    mkdir -p ~/.config/zsh
+   ln -sf ~/projects/claude-plugins/shell-configs/zsh-functions/functions.zsh ~/.config/zsh/functions.zsh
    ```
+
+   Adjust the path if your clone is somewhere other than `~/projects/claude-plugins`.
 
 3. **Add a source line to `~/.zshrc`:**
 
@@ -34,10 +32,9 @@ This directory contains portable shell functions to be sourced from `~/.zshrc`.
 
 ## Updating the functions
 
-To update to the latest version of the functions:
+If you used a symlink (recommended), just pull the latest changes and reload your shell:
 1. Pull the latest changes in the `claude-plugins` repo
-2. Re-copy `functions.zsh` to `~/.config/zsh/functions.zsh`
-3. Reload your shell (`source ~/.zshrc` or open a new terminal)
+2. Reload your shell (`source ~/.zshrc` or open a new terminal)
 
 ## What's included
 

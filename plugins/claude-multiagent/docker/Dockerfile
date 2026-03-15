@@ -287,7 +287,7 @@ if [ -n "$HOST_GH_DIR" ] && [ "$HOST_GH_DIR" != "$HOME/.config/gh" ]; then
 fi
 
 # Env vars passed via clauded -e KEY=VALUE (mounted as temp file)
-ENV_FILE=$(find /var/folders /tmp -maxdepth 2 -name "clauded-env.*" -type f 2>/dev/null | head -1)
+ENV_FILE=$(find /var/folders /tmp -maxdepth 5 -name "clauded-env.*" -type f 2>/dev/null | head -1)
 if [ -n "$ENV_FILE" ] && ! grep -qF "# clauded-env-loaded" "${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}" 2>/dev/null; then
   . "$ENV_FILE"
   PERSISTENT_ENV="${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}"
@@ -297,12 +297,76 @@ if [ -n "$ENV_FILE" ] && ! grep -qF "# clauded-env-loaded" "${CLAUDE_ENV_FILE:-/
   fi
 fi
 
+# When CLAUDE_CODE_OAUTH_TOKEN is set, ensure onboarding is marked complete
+# so Claude doesn't prompt for interactive setup despite having a valid token.
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  CLAUDE_JSON="$HOME/.claude.json"
+  if [ ! -f "$CLAUDE_JSON" ] || ! grep -q '"hasCompletedOnboarding"' "$CLAUDE_JSON" 2>/dev/null; then
+    if command -v jq >/dev/null 2>&1 && [ -f "$CLAUDE_JSON" ]; then
+      jq '.hasCompletedOnboarding = true' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" \
+        && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+    else
+      printf '{"hasCompletedOnboarding":true}\n' > "$CLAUDE_JSON"
+    fi
+  fi
+fi
+
 # sp (specify) — symlink if the workspace is mounted
 if [ ! -x "$HOME/.local/bin/sp" ]; then
-  SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
-  if [ -n "$SP_RUN" ]; then
+  SP_BIN=$(find /Users /home -maxdepth 5 -path "*/specify/specify" -type f 2>/dev/null | head -1)
+  if [ -n "$SP_BIN" ]; then
     mkdir -p "$HOME/.local/bin"
-    ln -sf "$SP_RUN" "$HOME/.local/bin/sp"
+    ln -sf "$SP_BIN" "$HOME/.local/bin/sp"
+  fi
+fi
+
+# specify — copy CLAUDE.md / AGENTS.md so Claude knows about the tool
+SP_DIR=$(find /Users /home -maxdepth 4 -path "*/projects/specify/AGENTS.md" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+if [ -n "$SP_DIR" ]; then
+  CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+  SPECIFY_MARKER="<!-- BEGIN SPECIFY -->"
+  # Only inject once
+  if ! grep -qF "$SPECIFY_MARKER" "$CLAUDE_MD" 2>/dev/null; then
+    mkdir -p "$(dirname "$CLAUDE_MD")"
+    cat >> "$CLAUDE_MD" <<'EOSPECIFY'
+
+<!-- BEGIN SPECIFY -->
+## Specify — spec-based functional verification
+
+The `sp` command (aliased from `specify`) is available in this sandbox. It turns functional requirements into machine-verifiable specs.
+
+### Quick reference
+
+```bash
+sp spec guide              # authoring guide
+sp spec lint --spec app.spec.yaml
+sp spec validate --spec app.spec.yaml --capture ./captures
+sp cli run --spec app.spec.yaml --output report/
+sp spec generate           # infer spec from captures
+sp spec evolve             # find gaps, suggest improvements
+sp spec export             # generate Playwright/Cypress tests
+sp mcp                     # start MCP server
+sp agent run               # autonomous headless verification
+```
+
+### Key commands
+
+| Command | What |
+|---------|------|
+| `spec validate` | Gap analysis: spec vs captured behavior |
+| `spec generate` | Infer a spec from capture data |
+| `spec evolve` | Find gaps and suggest spec improvements |
+| `spec lint` | Structural validation (no captures needed) |
+| `spec export` | Generate Playwright or Cypress tests from spec |
+| `spec import` | Import existing e2e tests as spec items |
+| `spec sync` | Bidirectional diff: spec vs e2e tests |
+| `cli run` | Run CLI commands defined in spec, validate output |
+| `agent run` | Autonomous headless verification |
+| `mcp` | MCP server for LLM clients |
+
+The specify project source is mounted read-only. Spec format is YAML or JSON. Reports include expected vs actual evidence for every assertion (JSON, Markdown, or HTML output).
+<!-- END SPECIFY -->
+EOSPECIFY
   fi
 fi
 

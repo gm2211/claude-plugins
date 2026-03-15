@@ -968,6 +968,53 @@ clauded() {
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   fi
 
+  # Auto-inject OAuth token if not already provided and no .credentials.json on host.
+  # Newer Claude Code on macOS stores credentials in the system Keychain, so the
+  # old approach of copying .credentials.json into the sandbox no longer works.
+  # On first run we prompt the user to go through `claude setup-token` (interactive,
+  # requires browser, ~30 seconds) and cache the resulting token for a year.
+  local _has_oauth=false
+  for _ev in "${_env_vars[@]}"; do
+    [[ "$_ev" == CLAUDE_CODE_OAUTH_TOKEN=* ]] && _has_oauth=true
+  done
+  if ! $_has_oauth && [ ! -f "$HOME/.claude/.credentials.json" ]; then
+    local _token_file="$HOME/.claude/.sandbox-token"
+    local _token=""
+    if [ -f "$_token_file" ]; then
+      _token=$(<"$_token_file")
+    fi
+    if [ -z "$_token" ]; then
+      printf '\033[1;33m[clauded]\033[0m No credentials file found (macOS Keychain auth).\n'
+      printf '\033[1;33m[clauded]\033[0m A one-time setup is needed to share auth with sandboxes.\n'
+      printf '\033[1;34m[clauded]\033[0m Run \033[1mclaude setup-token\033[0m now? (opens browser, token valid for 1 year) [Y/n] '
+      read -rsk1 _ans
+      printf '\n'
+      if [[ "$_ans" != [nN] ]]; then
+        printf '\033[1;34m[clauded]\033[0m Starting token setup — follow the browser prompt...\n'
+        local _setup_out
+        _setup_out=$(claude setup-token 2>&1)
+        _token=$(printf '%s' "$_setup_out" | grep -oE 'sk-ant-[A-Za-z0-9_-]+' | head -1)
+        if [ -z "$_token" ]; then
+          # If grep didn't catch it, the user may need to paste it manually
+          printf '\033[1;33m[clauded]\033[0m Could not auto-capture the token.\n'
+          printf '\033[1;34m[clauded]\033[0m Paste your token (sk-ant-...): '
+          read -r _token
+        fi
+        if [ -n "$_token" ]; then
+          printf '%s' "$_token" > "$_token_file"
+          chmod 600 "$_token_file"
+          printf '\033[1;32m[clauded]\033[0m Token saved to %s\n' "$_token_file"
+        fi
+      fi
+    fi
+    if [ -n "$_token" ]; then
+      _env_vars+=("CLAUDE_CODE_OAUTH_TOKEN=$_token")
+      printf '\033[1;32m[clauded]\033[0m Sandbox auth token loaded.\n'
+    else
+      printf '\033[1;33m[clauded]\033[0m No token — you may need to authenticate inside the sandbox.\n'
+    fi
+  fi
+
   # Write env vars to a temp file for ensure-plugins.sh to source inside sandbox
   local _env_file=""
   if [ ${#_env_vars[@]} -gt 0 ]; then
