@@ -57,11 +57,8 @@ if [[ -o interactive ]]; then
 fi
 
 # Preserve terminal scrollback when running Codex inside zellij/kitty.
-if [[ $- == *i* ]]; then
-    codex() {
-        command /opt/homebrew/bin/codex --no-alt-screen "$@"
-    }
-fi
+# Note: mouse scrolling in Codex inside Zellij is handled by
+# mouse_mode true in zellij/config.kdl — no --no-alt-screen needed.
 
 function ss() {
     local dir="${_CLAUDE_SCREENSHOTS_DIR}"
