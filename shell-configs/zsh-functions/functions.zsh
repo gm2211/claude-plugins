@@ -65,6 +65,11 @@ function ss() {
     mkdir -p "$dir"
     local f="${dir}/ss-$(date +%s)-${RANDOM}.png"
 
+    if [[ "$(uname)" == "Darwin" ]] && ! command -v pngpaste &>/dev/null; then
+        printf '\033[1;34m[ss]\033[0m Installing pngpaste...\n'
+        brew install pngpaste || { echo "Failed to install pngpaste" >&2; return 1; }
+    fi
+
     if command -v pngpaste &>/dev/null; then
         # macOS: grab from pasteboard, copy path to clipboard
         pngpaste "$f" && {
