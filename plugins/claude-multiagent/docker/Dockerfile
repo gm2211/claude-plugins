@@ -281,6 +281,9 @@ COPY --from=builder /plugin-cache/ /home/agent/.claude/plugins/
 # (Docker sandbox overwrites settings.json on creation, so we merge at runtime)
 RUN cat > /home/agent/.local/bin/ensure-plugins.sh <<'EOSCRIPT'
 #!/bin/sh
+# Idempotency guard — skip if already run this session
+[ -f /tmp/.ensure-plugins-done ] && return 0 2>/dev/null || [ -f /tmp/.ensure-plugins-done ] && exit 0
+
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
@@ -454,6 +457,21 @@ fi
 
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
+
+# ---------------------------------------------------------------------------
+# Claude binary wrapper — ensure-plugins.sh runs BEFORE the real claude,
+# working around Docker sandbox ignoring ENTRYPOINT (PID 1 = sleep infinity).
+# ---------------------------------------------------------------------------
+RUN CLAUDE_BIN=$(which claude) && \
+    mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real" && \
+    { printf '#!/bin/sh\n'; \
+      printf 'if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then\n'; \
+      printf '  . /home/agent/.local/bin/ensure-plugins.sh\n'; \
+      printf '  touch /tmp/.ensure-plugins-done\n'; \
+      printf 'fi\n'; \
+      printf 'exec "%s-real" "$@"\n' "$CLAUDE_BIN"; \
+    } > "$CLAUDE_BIN" && \
+    chmod +x "$CLAUDE_BIN"
 
 # beads-tui Python venv
 RUN set -eux; \
