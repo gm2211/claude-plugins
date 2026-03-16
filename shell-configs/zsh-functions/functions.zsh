@@ -1006,6 +1006,29 @@ clauded() {
     docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
   fi
 
+  # Auto-inject DigitalOcean API token if not already provided.
+  # Sources from: doctl config, then macOS keychain, then skips.
+  local _has_do=false
+  for _ev in "${_env_vars[@]}"; do
+    [[ "$_ev" == DIGITALOCEAN_API_TOKEN=* ]] && _has_do=true
+  done
+  if ! $_has_do; then
+    local _do_token=""
+    # Try doctl config first
+    if command -v doctl &>/dev/null; then
+      _do_token=$(doctl auth list --format Token --no-header 2>/dev/null | head -1)
+    fi
+    # Fallback: extract from doctl config.yaml
+    if [ -z "$_do_token" ]; then
+      local _doctl_config="$HOME/Library/Application Support/doctl/config.yaml"
+      [ -f "$_doctl_config" ] && _do_token=$(grep '^access-token:' "$_doctl_config" | awk '{print $2}')
+    fi
+    if [ -n "$_do_token" ]; then
+      _env_vars+=("DIGITALOCEAN_API_TOKEN=$_do_token")
+      printf '\033[1;32m[clauded]\033[0m DigitalOcean token loaded from doctl.\n'
+    fi
+  fi
+
   # Keep specify up to date (once per day, same logic as the sp function)
   if [ -d "$HOME/projects/specify/.git" ]; then
     local _sp_stamp="$HOME/projects/specify/.last-update-check"
