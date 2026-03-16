@@ -1148,6 +1148,7 @@ clauded() {
                 --reverse \
                 --prompt="Select directories to mount (ro): " \
                 --header="Tab=toggle  Enter=confirm  Esc=skip" \
+                --bind="enter:select+accept" \
                 --preview="ls -lhF --color=always \$(echo {} | sed \"s|^~|$HOME|\")" \
                 --preview-window=right:40% \
             2>/dev/null
