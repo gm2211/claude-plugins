@@ -124,6 +124,19 @@ RUN command -v gh >/dev/null 2>&1 || { \
     }
 
 # ---------------------------------------------------------------------------
+# DigitalOcean CLI (doctl)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) DOCTL_ARCH="amd64"  ;; \
+        arm64) DOCTL_ARCH="arm64"  ;; \
+        *)     echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/digitalocean/doctl/releases/latest/download/doctl-$(curl -fsSL https://api.github.com/repos/digitalocean/doctl/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)-linux-${DOCTL_ARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin; \
+    chmod +x /usr/local/bin/doctl
+
+# ---------------------------------------------------------------------------
 # Dolt (required by bd/beads issue tracker)
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
@@ -173,6 +186,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminf
 # Starship prompt
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
+
+# ---------------------------------------------------------------------------
+# Pre-cache DigitalOcean MCP package (avoids download on first use)
+# ---------------------------------------------------------------------------
+RUN npx -y @digitalocean/mcp --help 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # pbcopy wrapper (OSC 52 clipboard passthrough)
@@ -379,9 +397,15 @@ EOSPECIFY
 fi
 
 # ---------------------------------------------------------------------------
-# Merge plugin + statusLine settings into settings.json
+# Merge plugin + statusLine + MCP settings into settings.json
 # ---------------------------------------------------------------------------
 MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
+
+# Add DigitalOcean MCP server if API token is available
+if [ -n "$DIGITALOCEAN_API_TOKEN" ]; then
+  MERGE_OBJ=$(printf '%s' "$MERGE_OBJ" | jq --arg token "$DIGITALOCEAN_API_TOKEN" \
+    '. + {"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":$token}}}}')
+fi
 
 if [ ! -f "$SETTINGS" ]; then
   printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
