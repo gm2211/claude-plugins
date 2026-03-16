@@ -71,15 +71,9 @@ function ss() {
             echo -n "$f" | pbcopy
             echo "Saved & copied: $f"
         }
-    elif [ -d "$dir" ] && ls "$dir"/ss-*.png &>/dev/null 2>&1; then
+    elif [ -d "$dir" ] && f="$(find "$dir" -maxdepth 1 -name 'ss-*.png' -print 2>/dev/null | sort -r | head -1)" && [ -n "$f" ]; then
         # Docker/Linux: pick the newest screenshot from the shared mount
-        f="$(ls -t "$dir"/ss-*.png 2>/dev/null | head -1)"
-        if [ -n "$f" ]; then
-            echo "$f"
-        else
-            echo "No screenshots found in $dir" >&2
-            return 1
-        fi
+        echo "$f"
     else
         echo "No screenshot tool available and no screenshots in $dir" >&2
         echo "Take a screenshot on the host first (ss), then retry here." >&2
