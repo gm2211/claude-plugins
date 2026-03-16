@@ -1087,6 +1087,17 @@ clauded() {
     fi
     if [ -n "$_token" ]; then
       _env_vars+=("CLAUDE_CODE_OAUTH_TOKEN=$_token")
+      # Write .credentials.json on the host so it's available via the
+      # read-only ~/.claude mount when Claude checks auth at startup
+      # (before any Bash tool / CLAUDE_ENV_FILE sourcing happens).
+      local _creds_file="$HOME/.claude/.credentials.json"
+      if [ ! -f "$_creds_file" ]; then
+        local _expires_at=$(( $(date +%s) * 1000 + 31536000000 ))  # +1 year in ms
+        printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"","expiresAt":%s,"scopes":["user:inference","user:profile"]}}\n' \
+          "$_token" "$_expires_at" > "$_creds_file"
+        chmod 600 "$_creds_file"
+        printf '\033[1;32m[clauded]\033[0m Created .credentials.json for sandbox auth.\n'
+      fi
       printf '\033[1;32m[clauded]\033[0m Sandbox auth token loaded.\n'
     else
       printf '\033[1;33m[clauded]\033[0m No token — you may need to authenticate inside the sandbox.\n'

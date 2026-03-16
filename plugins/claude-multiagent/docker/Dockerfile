@@ -193,6 +193,11 @@ RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
 RUN npx -y @digitalocean/mcp --help 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# Playwright + browsers (for specify captures & e2e testing)
+# ---------------------------------------------------------------------------
+RUN npx -y playwright install --with-deps chromium
+
+# ---------------------------------------------------------------------------
 # pbcopy wrapper (OSC 52 clipboard passthrough)
 # ---------------------------------------------------------------------------
 RUN printf '#!/bin/sh\ndata=$(base64 | tr -d '"'"'\\n'"'"')\nprintf '"'"'\\033]52;c;%%s\\a'"'"' "$data"\n' \
@@ -310,6 +315,29 @@ if [ -n "$HOST_GH_DIR" ] && [ "$HOST_GH_DIR" != "$HOME/.config/gh" ]; then
   mkdir -p "$HOME/.config/gh"
   cp "$HOST_GH_DIR"/*.yml "$HOME/.config/gh/" 2>/dev/null
   chmod 600 "$HOME/.config/gh"/*.yml 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# OAuth token from host's .sandbox-token (created by clauded setup-token flow)
+# The host ~/.claude is mounted read-only, so we can read the token directly.
+# Docker sandbox ignores ENTRYPOINT (PID 1 is sleep infinity), so env vars
+# exported here only affect Bash tool invocations via CLAUDE_ENV_FILE.
+# For Claude's own auth, we must write CLAUDE_CODE_OAUTH_TOKEN to the
+# persistent env file so it's available when Claude's process reads it.
+# ---------------------------------------------------------------------------
+if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -n "$HOST_CLAUDE_DIR" ]; then
+  SANDBOX_TOKEN_FILE="$HOST_CLAUDE_DIR/.sandbox-token"
+  if [ -f "$SANDBOX_TOKEN_FILE" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN=$(cat "$SANDBOX_TOKEN_FILE")
+    export CLAUDE_CODE_OAUTH_TOKEN
+  fi
+fi
+# Persist the token to CLAUDE_ENV_FILE so Claude's Bash tool and process can use it
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  PERSISTENT_ENV="${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}"
+  if [ -f "$PERSISTENT_ENV" ] && ! grep -qF "CLAUDE_CODE_OAUTH_TOKEN" "$PERSISTENT_ENV" 2>/dev/null; then
+    printf 'export CLAUDE_CODE_OAUTH_TOKEN="%s"\n' "$CLAUDE_CODE_OAUTH_TOKEN" >> "$PERSISTENT_ENV"
+  fi
 fi
 
 # Env vars passed via clauded -e KEY=VALUE (mounted as temp file)
