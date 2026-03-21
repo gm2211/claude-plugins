@@ -347,24 +347,25 @@ SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
 # ---------------------------------------------------------------------------
-# Install credentials — always copy fresh from host mount.
+# Install credentials — only copy from host if none exist in container.
+# If the user ran /login inside the sandbox, those creds take precedence.
 #   1. Keychain-extracted temp file (clauded-creds.*) mounted by clauded()
-#   2. Host-mounted ~/.claude/.credentials.json (refreshed by clauded on each run)
+#   2. Host-mounted ~/.claude/.credentials.json
 #   3. Skip (user will be prompted to authenticate)
 # ---------------------------------------------------------------------------
 CREDS_DEST="$HOME/.claude/.credentials.json"
-# Source 1: keychain-extracted credentials (staging dir mounted by clauded)
-CREDS_TMP=$(find / -maxdepth 4 -name "clauded-creds" -type f 2>/dev/null | head -1)
-if [ -n "$CREDS_TMP" ]; then
-  cp "$CREDS_TMP" "$CREDS_DEST"
-  chmod 600 "$CREDS_DEST"
-else
-  # Source 2: host-mounted ~/.claude/.credentials.json
-  HOST_CRED=$(find / -maxdepth 5 -path "*/.claude/.credentials.json" -type f \
-                ! -path "$CREDS_DEST" 2>/dev/null | head -1)
-  if [ -n "$HOST_CRED" ]; then
-    cp "$HOST_CRED" "$CREDS_DEST"
+if [ ! -f "$CREDS_DEST" ]; then
+  CREDS_TMP=$(find / -maxdepth 4 -name "clauded-creds" -type f 2>/dev/null | head -1)
+  if [ -n "$CREDS_TMP" ]; then
+    cp "$CREDS_TMP" "$CREDS_DEST"
     chmod 600 "$CREDS_DEST"
+  else
+    HOST_CRED=$(find / -maxdepth 5 -path "*/.claude/.credentials.json" -type f \
+                  ! -path "$CREDS_DEST" 2>/dev/null | head -1)
+    if [ -n "$HOST_CRED" ]; then
+      cp "$HOST_CRED" "$CREDS_DEST"
+      chmod 600 "$CREDS_DEST"
+    fi
   fi
 fi
 
