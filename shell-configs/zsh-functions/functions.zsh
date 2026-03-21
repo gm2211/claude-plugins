@@ -57,8 +57,7 @@ if [[ -o interactive ]]; then
 fi
 
 # Preserve terminal scrollback when running Codex inside zellij/kitty.
-# Note: mouse scrolling in Codex inside Zellij is handled by
-# mouse_mode true in zellij/config.kdl — no --no-alt-screen needed.
+# mouse_mode true in zellij/config.kdl handles mouse scrolling in alt screen.
 
 function ss() {
     local dir="${_CLAUDE_SCREENSHOTS_DIR}"

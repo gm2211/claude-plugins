@@ -546,21 +546,23 @@ RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 # On first invocation, wraps claude inside zellij so the user gets a
 # multiplexer with claude in the first pane and can open more panes.
 # ---------------------------------------------------------------------------
-RUN CLAUDE_BIN=$(which claude) && \
-    mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real" && \
-    cat > "$CLAUDE_BIN" <<EOWRAPPER
+RUN <<'WRAPPER_SCRIPT'
+set -eux
+CLAUDE_BIN=$(which claude)
+mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real"
+cat > "$CLAUDE_BIN" <<EOWRAPPER
 #!/bin/sh
 if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
   . /home/agent/.local/bin/ensure-plugins.sh
 fi
-# Launch inside zellij if not already in a zellij session
 if [ -z "\$ZELLIJ" ] && command -v zellij >/dev/null 2>&1; then
   printf '%s\n' "${CLAUDE_BIN}-real \$*" > /tmp/.claude-cmd
   exec zellij
 fi
 exec "${CLAUDE_BIN}-real" "\$@"
 EOWRAPPER
-    chmod +x "$CLAUDE_BIN"
+chmod +x "$CLAUDE_BIN"
+WRAPPER_SCRIPT
 
 # beads-tui Python venv
 RUN set -eux; \
