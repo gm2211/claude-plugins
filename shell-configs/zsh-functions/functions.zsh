@@ -982,6 +982,7 @@ clauded() {
   local _repo="$HOME/projects/claude-plugins"
   local _dockerfile="plugins/claude-multiagent/docker/Dockerfile"
   local _rebuild=false
+  local _no_cache=false
   local _mount=false
   local _extra_mounts=()
   local _env_vars=()
@@ -990,19 +991,50 @@ clauded() {
   while [[ "$1" == --* || "$1" == -* ]]; do
     case "$1" in
       --rebuild)  _rebuild=true; shift ;;
+      --no-cache) _no_cache=true; _rebuild=true; shift ;;
       --mount|-m) _mount=true; shift ;;
       -e)         shift; _env_vars+=("$1"); shift ;;
       *) break ;;
     esac
   done
 
-  # Build image if needed
+  # Compute content hash of Dockerfile + all COPY'd source directories
+  _clauded_content_hash() {
+    (
+      cd "$_repo" || return 1
+      cat "$_dockerfile"
+      find shell-configs/zellij shell-configs/nvim \
+           shell-configs/zsh-functions shell-configs/claude-status-line \
+           -type f 2>/dev/null | sort | xargs cat 2>/dev/null
+    ) | shasum -a 256 | cut -d' ' -f1
+  }
+
+  local _hash_file="$HOME/.cache/clauded/image-hash"
+  local _current_hash
+  _current_hash=$(_clauded_content_hash)
+
+  # Build image if needed (track whether we rebuilt so we can remove stale sandboxes)
+  local _did_rebuild=false
+  local _build_flags=()
+  $_no_cache && _build_flags+=(--no-cache)
+
   if $_rebuild; then
     printf '\033[1;34m[clauded]\033[0m Rebuilding %s...\n' "$_image"
-    docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+    docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+    _did_rebuild=true
   elif ! docker image inspect "$_image" &>/dev/null; then
     printf '\033[1;34m[clauded]\033[0m Image %s not found, building...\n' "$_image"
-    docker build -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+    docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+    _did_rebuild=true
+  elif [ ! -f "$_hash_file" ] || [ "$_current_hash" != "$(cat "$_hash_file")" ]; then
+    printf '\033[1;33m[clauded]\033[0m Dockerfile or configs changed since last build. Rebuild? [Y/n] '
+    read -rsk1 _ans
+    printf '\n'
+    if [[ "$_ans" != [nN] ]]; then
+      printf '\033[1;34m[clauded]\033[0m Rebuilding %s...\n' "$_image"
+      docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+      _did_rebuild=true
+    fi
   fi
 
   # Auto-inject DigitalOcean API token if not already provided.
@@ -1047,10 +1079,6 @@ clauded() {
   fi
 
   # Auto-inject OAuth token if not already provided and no .credentials.json on host.
-  # Newer Claude Code on macOS stores credentials in the system Keychain, so the
-  # old approach of copying .credentials.json into the sandbox no longer works.
-  # On first run we prompt the user to go through `claude setup-token` (interactive,
-  # requires browser, ~30 seconds) and cache the resulting token for a year.
   local _has_oauth=false
   for _ev in "${_env_vars[@]}"; do
     [[ "$_ev" == CLAUDE_CODE_OAUTH_TOKEN=* ]] && _has_oauth=true
@@ -1073,7 +1101,6 @@ clauded() {
         _setup_out=$(claude setup-token 2>&1)
         _token=$(printf '%s' "$_setup_out" | grep -oE 'sk-ant-[A-Za-z0-9_-]+' | head -1)
         if [ -z "$_token" ]; then
-          # If grep didn't catch it, the user may need to paste it manually
           printf '\033[1;33m[clauded]\033[0m Could not auto-capture the token.\n'
           printf '\033[1;34m[clauded]\033[0m Paste your token (sk-ant-...): '
           read -r _token
@@ -1087,9 +1114,6 @@ clauded() {
     fi
     if [ -n "$_token" ]; then
       _env_vars+=("CLAUDE_CODE_OAUTH_TOKEN=$_token")
-      # Write .credentials.json on the host so it's available via the
-      # read-only ~/.claude mount when Claude checks auth at startup
-      # (before any Bash tool / CLAUDE_ENV_FILE sourcing happens).
       local _creds_file="$HOME/.claude/.credentials.json"
       if [ ! -f "$_creds_file" ]; then
         local _expires_at=$(( $(date +%s) * 1000 + 31536000000 ))  # +1 year in ms
@@ -1104,17 +1128,48 @@ clauded() {
     fi
   fi
 
-  # Write env vars to a temp file for ensure-plugins.sh to source inside sandbox
-  local _env_file=""
+  # Save current hash after build (or if no build was needed)
+  mkdir -p "$(dirname "$_hash_file")"
+  printf '%s\n' "$_current_hash" > "$_hash_file"
+
+  unfunction _clauded_content_hash 2>/dev/null
+
+  # Staging dir for temp files mounted into the sandbox.
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -name "clauded-staging.*" -type d -mmin +5 -exec rm -rf {} + 2>/dev/null
+
+  local _staging_dir=""
+  _staging_dir="$(mktemp -d -t clauded-staging.XXXXXX)"
+
+  # Write env vars for ensure-plugins.sh to source inside sandbox
   if [ ${#_env_vars[@]} -gt 0 ]; then
-    _env_file="$(mktemp -t clauded-env.XXXXXX)"
     for _ev in "${_env_vars[@]}"; do
       printf 'export %s\n' "$_ev"
-    done > "$_env_file"
+    done > "$_staging_dir/clauded-env"
+    chmod 600 "$_staging_dir/clauded-env"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Extract Claude credentials from macOS Keychain.
+  # Newer Claude Code versions store auth in Keychain instead of
+  # ~/.claude/.credentials.json.  We extract the JSON blob and write it to the
+  # staging dir; ensure-plugins.sh will find it inside the sandbox.
+  # ---------------------------------------------------------------------------
+  if security find-generic-password \
+       -s "Claude Code-credentials" \
+       -a "$(whoami)" \
+       -w > "$_staging_dir/clauded-creds" 2>/dev/null; then
+    chmod 600 "$_staging_dir/clauded-creds"
+  else
+    rm -f "$_staging_dir/clauded-creds"
+    if [ -f "$HOME/.claude/.credentials.json" ]; then
+      printf '\033[90m[clauded] Using legacy ~/.claude/.credentials.json\033[0m\n'
+    else
+      printf '\033[1;33m[clauded]\033[0m Warning: no Claude credentials found in Keychain or ~/.claude/.credentials.json\n'
+    fi
   fi
 
   # Cleanup helper
-  _clauded_cleanup() { [ -n "$_env_file" ] && rm -f "$_env_file" 2>/dev/null; }
+  _clauded_cleanup() { [ -n "$_staging_dir" ] && rm -rf "$_staging_dir" 2>/dev/null; }
   trap '_clauded_cleanup' EXIT INT TERM
 
   # -------------------------------------------------------------------------
@@ -1209,10 +1264,11 @@ clauded() {
 
     [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude:ro"
     [ -d "$HOME/.config/gh" ] && _clauded_add_mount "$HOME/.config/gh:ro"
-    [ -d "$HOME/projects/specify" ] && _clauded_add_mount "$HOME/projects/specify:ro"
+    # specify (sp) is baked into the gm-claude-dev Docker image — no mount needed
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
     _clauded_add_mount "${_CLAUDE_SCREENSHOTS_DIR}:ro"
-    [ -n "$_env_file" ] && [ -f "$_env_file" ] && _workspaces+=("$_env_file:ro")
+    # Mount staging dir (contains credentials + env vars as temp files)
+    [ -n "$_staging_dir" ] && [ -d "$_staging_dir" ] && _clauded_add_mount "$_staging_dir:ro"
     for _m in "${_extra_mounts[@]}"; do
       _clauded_add_mount "$_m"
     done
@@ -1233,7 +1289,7 @@ clauded() {
 
   # Check if a sandbox already exists for this workspace
   if docker sandbox ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$_sandbox_name"; then
-    if $_rebuild; then
+    if $_did_rebuild; then
       printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
       docker sandbox rm "$_sandbox_name" 2>/dev/null
       _clauded_prompt_mounts
@@ -1313,8 +1369,166 @@ clauded() {
   unfunction _clauded_sandbox_run _clauded_prompt_mounts 2>/dev/null
 }
 
+# clauded-ls() — List running Docker sandboxes and attach to one interactively.
+clauded-ls() {
+  local _json
+  _json=$(docker sandbox ls --json 2>/dev/null) || { echo "Failed to list sandboxes."; return 1; }
+
+  local _names=()
+  local _statuses=()
+  local _workspaces=()
+  while IFS=$'\t' read -r _name _status _ws; do
+    _names+=("$_name")
+    _statuses+=("$_status")
+    _workspaces+=("$_ws")
+  done < <(echo "$_json" | jq -r '.vms[] | [.name, .status, (.workspaces[0] // "—")] | @tsv')
+
+  if (( ${#_names[@]} == 0 )); then
+    printf '\033[1;34m[clauded-ls]\033[0m No sandboxes found.\n'
+    return 0
+  fi
+
+  # Build display lines
+  local _items=()
+  for (( i=1; i<=${#_names[@]}; i++ )); do
+    local _color="\033[32m"  # green for running
+    [[ "${_statuses[$i]}" != "running" ]] && _color="\033[33m"  # yellow otherwise
+    _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_names[$i]}" "$_color" "${_statuses[$i]}" "${_workspaces[$i]}")")
+  done
+
+  local _sel=1
+  local _n=${#_items[@]}
+
+  # Hide cursor
+  printf '\033[?25l'
+
+  _clauded_ls_draw() {
+    for (( i=1; i<=$_n; i++ )); do
+      if (( i == _sel )); then
+        printf '  \033[1;36m❯ %s\033[0m\n' "${_items[$i]}"
+      else
+        printf '    %s\n' "${_items[$i]}"
+      fi
+    done
+  }
+
+  printf '\033[1;34m[clauded-ls]\033[0m Select a sandbox (↑/↓, Enter to select, q to cancel):\n'
+  _clauded_ls_draw
+
+  while true; do
+    read -rsk1 _key
+    case "$_key" in
+      $'\x1b')
+        read -rsk2 _seq
+        case "$_seq" in
+          '[A') (( _sel > 1 )) && (( _sel-- )) ;;  # up
+          '[B') (( _sel < _n )) && (( _sel++ )) ;;  # down
+        esac
+        ;;
+      $'\n'|'') break ;;  # Enter
+      q|Q)
+        printf '\033[%dA\r' "$_n"
+        for (( i=1; i<=$_n; i++ )); do printf '\033[2K\n'; done
+        printf '\033[%dA' "$_n"
+        printf '\033[?25h'
+        printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
+        return 0
+        ;;
+      *) continue ;;
+    esac
+    # Redraw
+    printf '\033[%dA\r' "$_n"
+    _clauded_ls_draw
+  done
+
+  # Clear menu
+  printf '\033[%dA\r' "$_n"
+  for (( i=1; i<=$_n; i++ )); do printf '\033[2K\n'; done
+  printf '\033[%dA' "$_n"
+  printf '\033[?25h'
+
+  local _chosen="${_names[$_sel]}"
+
+  # Action picker
+  local _actions=("Attach — open interactive zsh session"
+                  "Delete — remove sandbox"
+                  "Cancel")
+  local _asel=1
+  local _an=${#_actions[@]}
+
+  printf '\033[?25l'
+
+  _clauded_ls_draw_actions() {
+    for (( i=1; i<=$_an; i++ )); do
+      if (( i == _asel )); then
+        printf '  \033[1;36m❯ %s\033[0m\n' "${_actions[$i]}"
+      else
+        printf '    %s\n' "${_actions[$i]}"
+      fi
+    done
+  }
+
+  printf '\033[1;34m[clauded-ls]\033[0m \033[1m%s\033[0m — pick action:\n' "$_chosen"
+  _clauded_ls_draw_actions
+
+  while true; do
+    read -rsk1 _key
+    case "$_key" in
+      $'\x1b')
+        read -rsk2 _seq
+        case "$_seq" in
+          '[A') (( _asel > 1 )) && (( _asel-- )) ;;
+          '[B') (( _asel < _an )) && (( _asel++ )) ;;
+        esac
+        ;;
+      $'\n'|'') break ;;  # Enter
+      q|Q)
+        printf '\033[%dA\r' "$_an"
+        for (( i=1; i<=$_an; i++ )); do printf '\033[2K\n'; done
+        printf '\033[%dA' "$_an"
+        printf '\033[?25h'
+        printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
+        return 0
+        ;;
+      *) continue ;;
+    esac
+    printf '\033[%dA\r' "$_an"
+    _clauded_ls_draw_actions
+  done
+
+  # Clear action menu
+  printf '\033[%dA\r' "$_an"
+  for (( i=1; i<=$_an; i++ )); do printf '\033[2K\n'; done
+  printf '\033[%dA' "$_an"
+  printf '\033[?25h'
+
+  case $_asel in
+    1)
+      printf '\033[1;34m[clauded-ls]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
+      docker sandbox exec -it "$_chosen" /bin/zsh
+      ;;
+    2)
+      printf '\033[1;33m[clauded-ls]\033[0m Remove \033[1m%s\033[0m? [y/N] ' "$_chosen"
+      read -rsk1 _confirm
+      printf '\n'
+      if [[ "$_confirm" == [yY] ]]; then
+        docker sandbox rm "$_chosen" 2>/dev/null
+        printf '\033[1;34m[clauded-ls]\033[0m Removed \033[1m%s\033[0m.\n' "$_chosen"
+      else
+        printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
+      fi
+      ;;
+    *)
+      printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
+      ;;
+  esac
+}
+
+# cll() — shorthand for clauded-ls
+cll() { clauded-ls "$@"; }
+
 # cls() — alias for cl() (convenience shorthand)
-cls() { cl "$@"; }
+cls() { cl -s "$@"; }
 
 # clsl() — Self-contained launcher for Claude Code with a local model.
 #

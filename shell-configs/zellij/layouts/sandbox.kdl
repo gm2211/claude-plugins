@@ -1,0 +1,64 @@
+// Sandbox layout — launched by the clauded entrypoint.
+// Runs the agent command (e.g. claude) in the main pane.
+// The entrypoint writes the actual command to /tmp/sandbox-cmd.sh.
+layout {
+    default_tab_template {
+        children
+        pane size=1 borderless=true {
+            plugin location="file:/home/agent/.config/zellij/plugins/zjstatus.wasm" {
+                format_left  "{mode}#[fg=#7f849c,bg=#1e1e2e,bold]{session}"
+                format_center "{tabs}"
+                format_right "{command_git_branch} {pipe_status} {datetime}"
+                format_space "#[bg=#1e1e2e]"
+                format_hide_on_overlength "true"
+                format_precedence "clr"
+
+                border_enabled  "false"
+                hide_frame_for_single_pane "false"
+                background "#1e1e2e"
+                color_bg "#1e1e2e"
+
+                // Minimal mode indicators — small colored block, no text labels
+                mode_normal  "#[bg=#89b4fa] #[bg=#1e1e2e] "
+                mode_tmux    "#[bg=#fab387] #[bg=#1e1e2e] "
+                mode_pane    "#[bg=#a6e3a1] #[bg=#1e1e2e] "
+                mode_tab     "#[bg=#cba6f7] #[bg=#1e1e2e] "
+                mode_resize  "#[bg=#f9e2af] #[bg=#1e1e2e] "
+                mode_move    "#[bg=#94e2d5] #[bg=#1e1e2e] "
+                mode_scroll  "#[bg=#f38ba8] #[bg=#1e1e2e] "
+                mode_search  "#[bg=#f5c2e7] #[bg=#1e1e2e] "
+                mode_session "#[bg=#74c7ec] #[bg=#1e1e2e] "
+                mode_locked  "#[bg=#6c7086] #[bg=#1e1e2e] "
+
+                // Tab styling — simple index + name, no arrows or pills
+                tab_normal              "#[fg=#6c7086,bg=#1e1e2e] {index} {name} "
+                tab_active              "#[fg=#cdd6f4,bg=#1e1e2e,bold] {index} {name} "
+                tab_separator           "#[fg=#45475a,bg=#1e1e2e] "
+                tab_display_count       "6"
+                tab_truncate_start_format "#[fg=#6c7086,bg=#1e1e2e] < +{count} "
+                tab_truncate_end_format   "#[fg=#6c7086,bg=#1e1e2e] +{count} >"
+
+                // Git branch
+                command_git_branch_command  "git rev-parse --abbrev-ref HEAD"
+                command_git_branch_format   "#[fg=#a6e3a1,bg=#1e1e2e]  {stdout} "
+                command_git_branch_interval "10"
+                command_git_branch_rendermode "static"
+
+                // Pipe status (dynamic updates from hooks)
+                pipe_status_format "#[fg=#6c7086,bg=#1e1e2e]{output}"
+                pipe_status_rendermode "dynamic"
+
+                // Full date and time on the right
+                datetime         "#[fg=#7f849c,bg=#1e1e2e]{format}"
+                datetime_format  "%A, %d %b %Y %H:%M"
+                datetime_timezone "America/New_York"
+            }
+        }
+    }
+
+    tab name="claude" focus=true {
+        pane command="/tmp/sandbox-cmd.sh" {
+            focus true
+        }
+    }
+}
