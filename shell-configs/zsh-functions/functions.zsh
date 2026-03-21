@@ -1326,7 +1326,15 @@ clauded() {
     _items+=("\033[1;33m+ New sandbox\033[0m — create for $(basename "$PWD")")
     _items+=("Cancel")
 
-    local _sel=1
+    # Default selection: sandbox matching current dir, or "+ New sandbox"
+    local _sel=$(( _n_sandboxes + 1 ))  # default to "+ New sandbox"
+    local _cur_sandbox="claude-$(basename "$PWD")"
+    for (( i=1; i<=${_n_sandboxes}; i++ )); do
+      if [[ "${_sb_names[$i]}" == "$_cur_sandbox" ]]; then
+        _sel=$i
+        break
+      fi
+    done
     local _n=${#_items[@]}
 
     printf '\033[?25l'
