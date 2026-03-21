@@ -543,9 +543,9 @@ cat > /home/agent/.local/bin/claude <<EOWRAPPER
 if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
   . /home/agent/.local/bin/ensure-plugins.sh
 fi
-# Update Claude Code once per session
+# Update Claude Code once per session (timeout after 30s to avoid hanging)
 if [ ! -f /tmp/.claude-updated ]; then
-  npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1
+  timeout 30 npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1 || true
   touch /tmp/.claude-updated
 fi
 exec ${REAL_CLAUDE} "\$@"
