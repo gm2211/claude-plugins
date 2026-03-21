@@ -507,7 +507,6 @@ fi
 # ---------------------------------------------------------------------------
 npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1
 
-touch /tmp/.ensure-plugins-done
 # ---------------------------------------------------------------------------
 # Merge plugin + statusLine + MCP settings into settings.json
 # ---------------------------------------------------------------------------
@@ -536,10 +535,7 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# Update Claude Code to latest in the background (non-blocking)
-# ---------------------------------------------------------------------------
-npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1
+touch /tmp/.ensure-plugins-done
 
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
@@ -547,16 +543,23 @@ RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 # ---------------------------------------------------------------------------
 # Claude binary wrapper — ensure-plugins.sh runs BEFORE the real claude,
 # working around Docker sandbox ignoring ENTRYPOINT (PID 1 = sleep infinity).
+# On first invocation, wraps claude inside zellij so the user gets a
+# multiplexer with claude in the first pane and can open more panes.
 # ---------------------------------------------------------------------------
 RUN CLAUDE_BIN=$(which claude) && \
     mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real" && \
-    { printf '#!/bin/sh\n'; \
-      printf 'if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then\n'; \
-      printf '  . /home/agent/.local/bin/ensure-plugins.sh\n'; \
-      printf '  touch /tmp/.ensure-plugins-done\n'; \
-      printf 'fi\n'; \
-      printf 'exec "%s-real" "$@"\n' "$CLAUDE_BIN"; \
-    } > "$CLAUDE_BIN" && \
+    cat > "$CLAUDE_BIN" <<EOWRAPPER
+#!/bin/sh
+if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
+  . /home/agent/.local/bin/ensure-plugins.sh
+fi
+# Launch inside zellij if not already in a zellij session
+if [ -z "\$ZELLIJ" ] && command -v zellij >/dev/null 2>&1; then
+  printf '%s\n' "${CLAUDE_BIN}-real \$*" > /tmp/.claude-cmd
+  exec zellij
+fi
+exec "${CLAUDE_BIN}-real" "\$@"
+EOWRAPPER
     chmod +x "$CLAUDE_BIN"
 
 # beads-tui Python venv
@@ -605,39 +608,4 @@ ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
 ENV CLAUDE_ENV_FILE=/etc/sandbox-persistent.sh
 
-# ---------------------------------------------------------------------------
-# Entrypoint — run ensure-plugins.sh before the agent starts so that
-# credentials, settings, and configs are in place before Claude checks auth.
-# NOTE: docker sandbox manages the terminal and agent process itself, so we
-# cannot replace the command with zellij here — we must exec "$@" directly.
-# ---------------------------------------------------------------------------
-RUN cat > /home/agent/.local/bin/entrypoint.sh <<'EOENTRY'
-#!/bin/sh
-[ -x ~/.local/bin/ensure-plugins.sh ] && . ~/.local/bin/ensure-plugins.sh
-
-# If the command is "claude ..." and we're not already inside zellij, wrap in zellij.
-# Save the original command so zellij's default shell can pick it up.
-if [ -z "$ZELLIJ" ] && command -v zellij >/dev/null 2>&1 && echo "$1" | grep -q "claude"; then
-  # Store the full command for the zellij pane to run
-  printf '%s\n' "$*" > /tmp/.claude-cmd
-  exec zellij
-else
-  exec "$@"
-fi
-EOENTRY
-
-# Wrapper script that zellij's default shell runs on startup
-RUN cat > /home/agent/.local/bin/run-claude-cmd.sh <<'EOCMD'
-#!/bin/sh
-# Run the saved claude command if present (one-shot: first pane only)
-if [ -f /tmp/.claude-cmd ]; then
-  CMD=$(cat /tmp/.claude-cmd)
-  rm -f /tmp/.claude-cmd
-  exec $CMD
-fi
-EOCMD
-RUN chmod +x /home/agent/.local/bin/run-claude-cmd.sh
-RUN chmod +x /home/agent/.local/bin/entrypoint.sh
-
 USER agent
-ENTRYPOINT ["/home/agent/.local/bin/entrypoint.sh"]
