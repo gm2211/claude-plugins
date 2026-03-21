@@ -1097,9 +1097,12 @@ clauded() {
       printf '\n'
       if [[ "$_ans" != [nN] ]]; then
         printf '\033[1;34m[clauded]\033[0m Starting token setup — follow the browser prompt...\n'
-        local _setup_out
-        _setup_out=$(claude setup-token 2>&1)
-        _token=$(printf '%s' "$_setup_out" | grep -oE 'sk-ant-[A-Za-z0-9_-]+' | head -1)
+        # Run interactively (needs TTY for browser open), tee output to capture token
+        local _setup_log
+        _setup_log="$(mktemp -t clauded-setup.XXXXXX)"
+        claude setup-token 2>&1 | tee "$_setup_log"
+        _token=$(grep -oE 'sk-ant-[A-Za-z0-9_-]+' "$_setup_log" | head -1)
+        rm -f "$_setup_log"
         if [ -z "$_token" ]; then
           printf '\033[1;33m[clauded]\033[0m Could not auto-capture the token.\n'
           printf '\033[1;34m[clauded]\033[0m Paste your token (sk-ant-...): '
@@ -1256,9 +1259,8 @@ clauded() {
       local _path="${1%%:*}"  # strip :ro suffix
       local _real
       _real="$(cd "$_path" 2>/dev/null && pwd -P)" || return 0
-      # Skip if this path is or contains $PWD, or $PWD contains this path
-      case "$_pwd_real" in "$_real"*) return 0 ;; esac
-      case "$_real" in "$_pwd_real"*) return 0 ;; esac
+      # Skip only exact match (docker sandbox already mounts $PWD as ".")
+      [ "$_real" = "$_pwd_real" ] && return 0
       _workspaces+=("$1")
     }
 
