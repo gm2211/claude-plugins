@@ -301,13 +301,6 @@ RUN cat > /home/agent/.zshrc <<'EOZSH'
 # Ensure plugins are enabled (Docker sandbox overwrites settings.json on creation)
 [ -x ~/.local/bin/ensure-plugins.sh ] && ~/.local/bin/ensure-plugins.sh
 
-# If there's a saved claude command (from entrypoint), run it in this first pane
-if [[ -n "$ZELLIJ" ]] && [[ -f /tmp/.claude-cmd ]]; then
-    CMD=$(cat /tmp/.claude-cmd)
-    rm -f /tmp/.claude-cmd
-    eval "$CMD"
-fi
-
 # Starship prompt
 eval "$(starship init zsh)"
 
@@ -536,17 +529,12 @@ EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 
 # ---------------------------------------------------------------------------
-# Claude binary wrapper — ensure-plugins.sh runs BEFORE the real claude,
-# working around Docker sandbox ignoring ENTRYPOINT (PID 1 = sleep infinity).
-# On first invocation, wraps claude inside zellij so the user gets a
-# multiplexer with claude in the first pane and can open more panes.
-# ---------------------------------------------------------------------------
 # Claude wrapper — lives in ~/.local/bin which is first on PATH, so it
 # shadows the npm-installed binary and survives npm updates.
-# Runs ensure-plugins.sh, updates claude, then launches zellij or claude.
+# Runs ensure-plugins.sh and updates claude before launching.
+# ---------------------------------------------------------------------------
 RUN <<'WRAPPER_SCRIPT'
 set -eux
-# Find the real claude binary path (npm-installed)
 REAL_CLAUDE=$(which claude)
 
 cat > /home/agent/.local/bin/claude <<EOWRAPPER
@@ -558,11 +546,6 @@ fi
 if [ ! -f /tmp/.claude-updated ]; then
   npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1
   touch /tmp/.claude-updated
-fi
-# Launch inside zellij if not already in a zellij session
-if [ -z "\$ZELLIJ" ] && command -v zellij >/dev/null 2>&1; then
-  printf '%s\n' "${REAL_CLAUDE} \$*" > /tmp/.claude-cmd
-  exec zellij
 fi
 exec ${REAL_CLAUDE} "\$@"
 EOWRAPPER
