@@ -536,9 +536,10 @@ RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 # ---------------------------------------------------------------------------
 RUN <<'WRAPPER_SCRIPT'
 set -eux
-REAL_CLAUDE=$(which claude)
+CLAUDE_BIN=$(which claude)
+mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real"
 
-cat > /home/agent/.local/bin/claude <<EOWRAPPER
+cat > "$CLAUDE_BIN" <<'EOWRAPPER'
 #!/bin/sh
 if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
   . /home/agent/.local/bin/ensure-plugins.sh
@@ -548,9 +549,9 @@ if [ ! -f /tmp/.claude-updated ]; then
   timeout 30 npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1 || true
   touch /tmp/.claude-updated
 fi
-exec ${REAL_CLAUDE} "\$@"
+exec "$(dirname "$0")/claude-real" "$@"
 EOWRAPPER
-chmod +x /home/agent/.local/bin/claude
+chmod +x "$CLAUDE_BIN"
 WRAPPER_SCRIPT
 
 # beads-tui Python venv
