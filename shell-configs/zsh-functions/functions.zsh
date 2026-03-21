@@ -1285,248 +1285,183 @@ clauded() {
     "${_cmd[@]}"
   }
 
-  # Derive the sandbox name docker would use for this workspace
-  local _sandbox_name="claude-$(basename "$PWD")"
+  # -------------------------------------------------------------------------
+  # Interactive sandbox picker — list existing sandboxes + option to create new
+  # -------------------------------------------------------------------------
+  local _sandbox_json
+  _sandbox_json=$(docker sandbox ls --json 2>/dev/null)
 
-  # Check if a sandbox already exists for this workspace
-  if docker sandbox ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$_sandbox_name"; then
-    if $_did_rebuild; then
+  local _sb_names=() _sb_statuses=() _sb_workspaces=()
+  if [ -n "$_sandbox_json" ]; then
+    while IFS=$'\t' read -r _name _status _ws; do
+      _sb_names+=("$_name")
+      _sb_statuses+=("$_status")
+      _sb_workspaces+=("$_ws")
+    done < <(echo "$_sandbox_json" | jq -r '.vms[] | [.name, .status, (.workspaces[0] // "—")] | @tsv')
+  fi
+
+  local _n_sandboxes=${#_sb_names[@]}
+
+  # If rebuild happened, remove existing sandbox for this workspace and create fresh
+  if $_did_rebuild; then
+    local _sandbox_name="claude-$(basename "$PWD")"
+    if docker sandbox ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$_sandbox_name"; then
       printf '\033[1;34m[clauded]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
       docker sandbox rm "$_sandbox_name" 2>/dev/null
+    fi
+    _clauded_prompt_mounts
+    _clauded_sandbox_run -t "$_image" -- "$@"
+  elif (( _n_sandboxes == 0 )); then
+    # No sandboxes — go straight to creating one
+    _clauded_prompt_mounts
+    _clauded_sandbox_run -t "$_image" -- "$@"
+  else
+    # Build menu: existing sandboxes + New + Cancel
+    local _items=()
+    for (( i=1; i<=${_n_sandboxes}; i++ )); do
+      local _color="\033[32m"
+      [[ "${_sb_statuses[$i]}" != "running" ]] && _color="\033[33m"
+      _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_sb_names[$i]}" "$_color" "${_sb_statuses[$i]}" "${_sb_workspaces[$i]}")")
+    done
+    _items+=("\033[1;33m+ New sandbox\033[0m — create for $(basename "$PWD")")
+    _items+=("Cancel")
+
+    local _sel=1
+    local _n=${#_items[@]}
+
+    printf '\033[?25l'
+
+    _clauded_draw_menu() {
+      for (( i=1; i<=$_n; i++ )); do
+        if (( i == _sel )); then
+          printf '  \033[1;36m❯ %b\033[0m\n' "${_items[$i]}"
+        else
+          printf '    %b\n' "${_items[$i]}"
+        fi
+      done
+    }
+
+    printf '\033[1;34m[clauded]\033[0m Select a sandbox or create new (↑/↓, Enter, q to cancel):\n'
+    _clauded_draw_menu
+
+    while true; do
+      read -rsk1 _key
+      case "$_key" in
+        $'\x1b')
+          read -rsk2 _seq
+          case "$_seq" in
+            '[A') (( _sel > 1 )) && (( _sel-- )) ;;
+            '[B') (( _sel < _n )) && (( _sel++ )) ;;
+          esac
+          ;;
+        $'\n'|'') break ;;
+        q|Q) _sel=$_n; break ;;
+        *) continue ;;
+      esac
+      printf '\033[%dA\r' "$_n"
+      _clauded_draw_menu
+    done
+
+    # Clear menu
+    printf '\033[%dA\r' "$_n"
+    for (( i=1; i<=$_n; i++ )); do printf '\033[2K\n'; done
+    printf '\033[%dA' "$_n"
+    printf '\033[?25h'
+    unfunction _clauded_draw_menu 2>/dev/null
+
+    if (( _sel == _n )); then
+      # Cancel
+      printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
+      _clauded_cleanup
+      return 0
+    elif (( _sel == _n - 1 )); then
+      # New sandbox
       _clauded_prompt_mounts
       _clauded_sandbox_run -t "$_image" -- "$@"
     else
-      printf '\033[1;34m[clauded]\033[0m Found existing sandbox %s.\n' "$_sandbox_name"
+      # Selected existing sandbox — action picker
+      local _chosen="${_sb_names[$_sel]}"
 
-      local _options=("Resume — reattach to existing sandbox"
-                      "New    — remove old sandbox, create fresh one"
-                      "Cancel — abort")
-      local _sel=0
-      local _n=${#_options[@]}
-      local _key
+      local _actions=("Resume  — reattach claude session"
+                      "Shell   — open interactive zsh"
+                      "Delete  — remove sandbox"
+                      "Cancel")
+      local _asel=1
+      local _an=${#_actions[@]}
 
-      # Hide cursor
       printf '\033[?25l'
 
-      # Draw menu
-      _clauded_draw_menu() {
-        for (( i=0; i<_n; i++ )); do
-          if (( i == _sel )); then
-            printf '\033[1;34m  ▸ %s\033[0m\n' "${_options[$((i+1))]}"
+      _clauded_draw_actions() {
+        for (( i=1; i<=$_an; i++ )); do
+          if (( i == _asel )); then
+            printf '  \033[1;36m❯ %s\033[0m\n' "${_actions[$i]}"
           else
-            printf '    %s\n' "${_options[$((i+1))]}"
+            printf '    %s\n' "${_actions[$i]}"
           fi
         done
       }
 
-      _clauded_draw_menu
+      printf '\033[1;34m[clauded]\033[0m \033[1m%s\033[0m — pick action:\n' "$_chosen"
+      _clauded_draw_actions
 
       while true; do
         read -rsk1 _key
-        if [[ "$_key" == $'\e' ]]; then
-          read -rsk2 _key
-          _key="${_key[2]}"
-        fi
         case "$_key" in
-          A|k) (( _sel = (_sel - 1 + _n) % _n )) ;;  # up
-          B|j) (( _sel = (_sel + 1) % _n )) ;;        # down
-          $'\n'|'') break ;;                             # enter
-          q) _sel=2; break ;;                           # quit = cancel
+          $'\x1b')
+            read -rsk2 _seq
+            case "$_seq" in
+              '[A') (( _asel > 1 )) && (( _asel-- )) ;;
+              '[B') (( _asel < _an )) && (( _asel++ )) ;;
+            esac
+            ;;
+          $'\n'|'') break ;;
+          q|Q) _asel=$_an; break ;;
+          *) continue ;;
         esac
-        # Redraw: move up _n lines, clear, redraw
-        printf "\033[${_n}A"
-        for (( i=0; i<_n; i++ )); do printf '\033[2K\r'; [[ $i -lt $((_n-1)) ]] && printf '\n'; done
-        printf "\033[${_n}A"  # back to top again
-        _clauded_draw_menu
+        printf '\033[%dA\r' "$_an"
+        _clauded_draw_actions
       done
 
-      # Show cursor
+      # Clear action menu
+      printf '\033[%dA\r' "$_an"
+      for (( i=1; i<=$_an; i++ )); do printf '\033[2K\n'; done
+      printf '\033[%dA' "$_an"
       printf '\033[?25h'
+      unfunction _clauded_draw_actions 2>/dev/null
 
-      unfunction _clauded_draw_menu 2>/dev/null
-
-      case $_sel in
-        0)
-          docker sandbox run "$_sandbox_name" -- "$@"
-          ;;
+      case $_asel in
         1)
-          docker sandbox rm "$_sandbox_name" 2>/dev/null
-          _clauded_prompt_mounts
-          _clauded_sandbox_run -t "$_image" -- "$@"
+          printf '\033[1;34m[clauded]\033[0m Resuming \033[1m%s\033[0m...\n' "$_chosen"
+          docker sandbox run "$_chosen" -- "$@"
+          ;;
+        2)
+          printf '\033[1;34m[clauded]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
+          docker sandbox exec -it "$_chosen" /bin/zsh
+          ;;
+        3)
+          printf '\033[1;33m[clauded]\033[0m Remove \033[1m%s\033[0m? [y/N] ' "$_chosen"
+          read -rsk1 _confirm
+          printf '\n'
+          if [[ "$_confirm" == [yY] ]]; then
+            docker sandbox rm "$_chosen" 2>/dev/null
+            printf '\033[1;34m[clauded]\033[0m Removed \033[1m%s\033[0m.\n' "$_chosen"
+          else
+            printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
+          fi
           ;;
         *)
           printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
-          _clauded_cleanup
-          return 0
           ;;
       esac
     fi
-  else
-    _clauded_prompt_mounts
-    _clauded_sandbox_run -t "$_image" -- "$@"
   fi
 
   _clauded_cleanup
   unfunction _clauded_sandbox_run _clauded_prompt_mounts 2>/dev/null
 }
 
-# clauded-ls() — List running Docker sandboxes and attach to one interactively.
-clauded-ls() {
-  local _json
-  _json=$(docker sandbox ls --json 2>/dev/null) || { echo "Failed to list sandboxes."; return 1; }
-
-  local _names=()
-  local _statuses=()
-  local _workspaces=()
-  while IFS=$'\t' read -r _name _status _ws; do
-    _names+=("$_name")
-    _statuses+=("$_status")
-    _workspaces+=("$_ws")
-  done < <(echo "$_json" | jq -r '.vms[] | [.name, .status, (.workspaces[0] // "—")] | @tsv')
-
-  if (( ${#_names[@]} == 0 )); then
-    printf '\033[1;34m[clauded-ls]\033[0m No sandboxes found.\n'
-    return 0
-  fi
-
-  # Build display lines
-  local _items=()
-  for (( i=1; i<=${#_names[@]}; i++ )); do
-    local _color="\033[32m"  # green for running
-    [[ "${_statuses[$i]}" != "running" ]] && _color="\033[33m"  # yellow otherwise
-    _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_names[$i]}" "$_color" "${_statuses[$i]}" "${_workspaces[$i]}")")
-  done
-
-  local _sel=1
-  local _n=${#_items[@]}
-
-  # Hide cursor
-  printf '\033[?25l'
-
-  _clauded_ls_draw() {
-    for (( i=1; i<=$_n; i++ )); do
-      if (( i == _sel )); then
-        printf '  \033[1;36m❯ %s\033[0m\n' "${_items[$i]}"
-      else
-        printf '    %s\n' "${_items[$i]}"
-      fi
-    done
-  }
-
-  printf '\033[1;34m[clauded-ls]\033[0m Select a sandbox (↑/↓, Enter to select, q to cancel):\n'
-  _clauded_ls_draw
-
-  while true; do
-    read -rsk1 _key
-    case "$_key" in
-      $'\x1b')
-        read -rsk2 _seq
-        case "$_seq" in
-          '[A') (( _sel > 1 )) && (( _sel-- )) ;;  # up
-          '[B') (( _sel < _n )) && (( _sel++ )) ;;  # down
-        esac
-        ;;
-      $'\n'|'') break ;;  # Enter
-      q|Q)
-        printf '\033[%dA\r' "$_n"
-        for (( i=1; i<=$_n; i++ )); do printf '\033[2K\n'; done
-        printf '\033[%dA' "$_n"
-        printf '\033[?25h'
-        printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
-        return 0
-        ;;
-      *) continue ;;
-    esac
-    # Redraw
-    printf '\033[%dA\r' "$_n"
-    _clauded_ls_draw
-  done
-
-  # Clear menu
-  printf '\033[%dA\r' "$_n"
-  for (( i=1; i<=$_n; i++ )); do printf '\033[2K\n'; done
-  printf '\033[%dA' "$_n"
-  printf '\033[?25h'
-
-  local _chosen="${_names[$_sel]}"
-
-  # Action picker
-  local _actions=("Attach — open interactive zsh session"
-                  "Delete — remove sandbox"
-                  "Cancel")
-  local _asel=1
-  local _an=${#_actions[@]}
-
-  printf '\033[?25l'
-
-  _clauded_ls_draw_actions() {
-    for (( i=1; i<=$_an; i++ )); do
-      if (( i == _asel )); then
-        printf '  \033[1;36m❯ %s\033[0m\n' "${_actions[$i]}"
-      else
-        printf '    %s\n' "${_actions[$i]}"
-      fi
-    done
-  }
-
-  printf '\033[1;34m[clauded-ls]\033[0m \033[1m%s\033[0m — pick action:\n' "$_chosen"
-  _clauded_ls_draw_actions
-
-  while true; do
-    read -rsk1 _key
-    case "$_key" in
-      $'\x1b')
-        read -rsk2 _seq
-        case "$_seq" in
-          '[A') (( _asel > 1 )) && (( _asel-- )) ;;
-          '[B') (( _asel < _an )) && (( _asel++ )) ;;
-        esac
-        ;;
-      $'\n'|'') break ;;  # Enter
-      q|Q)
-        printf '\033[%dA\r' "$_an"
-        for (( i=1; i<=$_an; i++ )); do printf '\033[2K\n'; done
-        printf '\033[%dA' "$_an"
-        printf '\033[?25h'
-        printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
-        return 0
-        ;;
-      *) continue ;;
-    esac
-    printf '\033[%dA\r' "$_an"
-    _clauded_ls_draw_actions
-  done
-
-  # Clear action menu
-  printf '\033[%dA\r' "$_an"
-  for (( i=1; i<=$_an; i++ )); do printf '\033[2K\n'; done
-  printf '\033[%dA' "$_an"
-  printf '\033[?25h'
-
-  case $_asel in
-    1)
-      printf '\033[1;34m[clauded-ls]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
-      docker sandbox exec -it "$_chosen" /bin/zsh
-      ;;
-    2)
-      printf '\033[1;33m[clauded-ls]\033[0m Remove \033[1m%s\033[0m? [y/N] ' "$_chosen"
-      read -rsk1 _confirm
-      printf '\n'
-      if [[ "$_confirm" == [yY] ]]; then
-        docker sandbox rm "$_chosen" 2>/dev/null
-        printf '\033[1;34m[clauded-ls]\033[0m Removed \033[1m%s\033[0m.\n' "$_chosen"
-      else
-        printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
-      fi
-      ;;
-    *)
-      printf '\033[1;34m[clauded-ls]\033[0m Cancelled.\n'
-      ;;
-  esac
-}
-
-# cll() — shorthand for clauded-ls
-cll() { clauded-ls "$@"; }
+# cll() — shorthand for clauded (interactive sandbox picker)
+cll() { clauded "$@"; }
 
 # cls() — alias for cl() (convenience shorthand)
 cls() { cl -s "$@"; }
