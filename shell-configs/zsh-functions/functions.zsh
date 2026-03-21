@@ -1077,26 +1077,24 @@ clauded() {
     fi
   fi
 
-  # Auto-inject OAuth token if not already provided and no .credentials.json on host.
+  # Auto-inject OAuth token — always refresh .credentials.json for the sandbox.
   local _has_oauth=false
   for _ev in "${_env_vars[@]}"; do
     [[ "$_ev" == CLAUDE_CODE_OAUTH_TOKEN=* ]] && _has_oauth=true
   done
-  if ! $_has_oauth && [ ! -f "$HOME/.claude/.credentials.json" ]; then
+  if ! $_has_oauth; then
     local _token_file="$HOME/.claude/.sandbox-token"
     local _token=""
     if [ -f "$_token_file" ]; then
       _token=$(<"$_token_file")
     fi
     if [ -z "$_token" ]; then
-      printf '\033[1;33m[clauded]\033[0m No credentials file found (macOS Keychain auth).\n'
-      printf '\033[1;33m[clauded]\033[0m A one-time setup is needed to share auth with sandboxes.\n'
+      printf '\033[1;33m[clauded]\033[0m No sandbox token found.\n'
       printf '\033[1;34m[clauded]\033[0m Run \033[1mclaude setup-token\033[0m now? (opens browser, token valid for 1 year) [Y/n] '
       read -rsk1 _ans
       printf '\n'
       if [[ "$_ans" != [nN] ]]; then
         printf '\033[1;34m[clauded]\033[0m Starting token setup — follow the browser prompt...\n'
-        # Run interactively (needs TTY for browser open), tee output to capture token
         local _setup_log
         _setup_log="$(mktemp -t clauded-setup.XXXXXX)"
         claude setup-token 2>&1 | tee "$_setup_log"
@@ -1116,15 +1114,13 @@ clauded() {
     fi
     if [ -n "$_token" ]; then
       _env_vars+=("CLAUDE_CODE_OAUTH_TOKEN=$_token")
+      # Always refresh .credentials.json so the sandbox gets a valid token
       local _creds_file="$HOME/.claude/.credentials.json"
-      if [ ! -f "$_creds_file" ]; then
-        local _expires_at=$(( $(date +%s) * 1000 + 31536000000 ))  # +1 year in ms
-        printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"","expiresAt":%s,"scopes":["user:inference","user:profile"]}}\n' \
-          "$_token" "$_expires_at" > "$_creds_file"
-        chmod 600 "$_creds_file"
-        printf '\033[1;32m[clauded]\033[0m Created .credentials.json for sandbox auth.\n'
-      fi
-      printf '\033[1;32m[clauded]\033[0m Sandbox auth token loaded.\n'
+      local _expires_at=$(( $(date +%s) * 1000 + 31536000000 ))  # +1 year in ms
+      printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"","expiresAt":%s,"scopes":["user:inference","user:profile"]}}\n' \
+        "$_token" "$_expires_at" > "$_creds_file"
+      chmod 600 "$_creds_file"
+      printf '\033[1;32m[clauded]\033[0m Sandbox auth token refreshed.\n'
     else
       printf '\033[1;33m[clauded]\033[0m No token — you may need to authenticate inside the sandbox.\n'
     fi
