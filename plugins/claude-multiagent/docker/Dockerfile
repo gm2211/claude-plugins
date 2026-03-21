@@ -291,6 +291,7 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/agent/.config/zellij/plugins/zjframes.wasm|g' \
          /home/agent/.config/zellij/config.kdl \
     && sed -i '/^copy_command/d' /home/agent/.config/zellij/config.kdl \
+    && sed -i 's/^mouse_mode true/mouse_mode false/' /home/agent/.config/zellij/config.kdl \
     && sed -i 's|file:~/.config/zellij/plugins/zellij-attention.wasm|file:/home/agent/.config/zellij/plugins/zellij-attention.wasm|g' \
          /home/agent/.config/zellij/config.kdl
 
