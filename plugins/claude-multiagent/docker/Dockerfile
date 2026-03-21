@@ -524,35 +524,16 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Update Claude Code to latest version (once per session, timeout 30s)
+# ---------------------------------------------------------------------------
+timeout 30 npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1 || true
+
 touch /tmp/.ensure-plugins-done
 
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 
-# ---------------------------------------------------------------------------
-# Claude wrapper — lives in ~/.local/bin which is first on PATH, so it
-# shadows the npm-installed binary and survives npm updates.
-# Runs ensure-plugins.sh and updates claude before launching.
-# ---------------------------------------------------------------------------
-RUN <<'WRAPPER_SCRIPT'
-set -eux
-CLAUDE_BIN=$(which claude)
-mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real"
-
-cat > "$CLAUDE_BIN" <<'EOWRAPPER'
-#!/bin/sh
-if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
-  . /home/agent/.local/bin/ensure-plugins.sh
-fi
-# Update Claude Code once per session (timeout after 30s to avoid hanging)
-if [ ! -f /tmp/.claude-updated ]; then
-  timeout 30 npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1 || true
-  touch /tmp/.claude-updated
-fi
-exec "$(dirname "$0")/claude-real" "$@"
-EOWRAPPER
-chmod +x "$CLAUDE_BIN"
-WRAPPER_SCRIPT
 
 # beads-tui Python venv
 RUN set -eux; \
