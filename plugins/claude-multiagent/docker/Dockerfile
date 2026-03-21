@@ -503,11 +503,6 @@ EOSPECIFY
 fi
 
 # ---------------------------------------------------------------------------
-# Update Claude Code to latest version (blocking — ensures latest on startup)
-# ---------------------------------------------------------------------------
-npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1
-
-# ---------------------------------------------------------------------------
 # Merge plugin + statusLine + MCP settings into settings.json
 # ---------------------------------------------------------------------------
 MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true,"ralph-loop@claude-plugins-official":true,"feature-dev@claude-plugins-official":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
@@ -546,22 +541,32 @@ RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 # On first invocation, wraps claude inside zellij so the user gets a
 # multiplexer with claude in the first pane and can open more panes.
 # ---------------------------------------------------------------------------
+# Claude wrapper — lives in ~/.local/bin which is first on PATH, so it
+# shadows the npm-installed binary and survives npm updates.
+# Runs ensure-plugins.sh, updates claude, then launches zellij or claude.
 RUN <<'WRAPPER_SCRIPT'
 set -eux
-CLAUDE_BIN=$(which claude)
-mv "$CLAUDE_BIN" "${CLAUDE_BIN}-real"
-cat > "$CLAUDE_BIN" <<EOWRAPPER
+# Find the real claude binary path (npm-installed)
+REAL_CLAUDE=$(which claude)
+
+cat > /home/agent/.local/bin/claude <<EOWRAPPER
 #!/bin/sh
 if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
   . /home/agent/.local/bin/ensure-plugins.sh
 fi
+# Update Claude Code once per session
+if [ ! -f /tmp/.claude-updated ]; then
+  npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1
+  touch /tmp/.claude-updated
+fi
+# Launch inside zellij if not already in a zellij session
 if [ -z "\$ZELLIJ" ] && command -v zellij >/dev/null 2>&1; then
-  printf '%s\n' "${CLAUDE_BIN}-real \$*" > /tmp/.claude-cmd
+  printf '%s\n' "${REAL_CLAUDE} \$*" > /tmp/.claude-cmd
   exec zellij
 fi
-exec "${CLAUDE_BIN}-real" "\$@"
+exec ${REAL_CLAUDE} "\$@"
 EOWRAPPER
-chmod +x "$CLAUDE_BIN"
+chmod +x /home/agent/.local/bin/claude
 WRAPPER_SCRIPT
 
 # beads-tui Python venv
