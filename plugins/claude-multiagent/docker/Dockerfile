@@ -534,6 +534,26 @@ touch /tmp/.ensure-plugins-done
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
 
+# ---------------------------------------------------------------------------
+# Claude wrapper — docker sandbox runs "claude" directly (no shell, no
+# .zshrc, no CLAUDE_ENV_FILE), so we need a wrapper to run ensure-plugins.sh.
+# Resolve the symlink to the actual binary, then replace the symlink with
+# a wrapper script that calls the resolved path.
+# ---------------------------------------------------------------------------
+RUN <<'WRAP'
+set -eux
+CLAUDE_LINK=$(which claude)
+CLAUDE_REAL=$(readlink -f "$CLAUDE_LINK")
+rm "$CLAUDE_LINK"
+cat > "$CLAUDE_LINK" <<EOF
+#!/bin/sh
+if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
+  . /home/agent/.local/bin/ensure-plugins.sh
+fi
+exec "$CLAUDE_REAL" "\$@"
+EOF
+chmod +x "$CLAUDE_LINK"
+WRAP
 
 # beads-tui Python venv
 RUN set -eux; \
