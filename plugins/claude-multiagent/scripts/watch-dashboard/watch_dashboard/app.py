@@ -91,7 +91,17 @@ class WatchDashboardApp(App):
         event.prevent_default()
 
     def on_resize(self, event: Resize) -> None:
-        """Force full repaint after terminal resize to avoid ghost artifacts."""
+        """Force full repaint after terminal resize to avoid ghost artifacts.
+
+        Textual's DataTable caches rendered header lines internally. In terminal
+        multiplexers like Zellij, resize events can leave stale header copies on
+        screen. We clear the screen buffer and force all DataTables to
+        recalculate their content via _clear_caches().
+        """
+        for dt in self.query(DataTable):
+            dt._clear_caches()  # noqa: SLF001 — no public API for this
+            dt.refresh(layout=True)
+        self._driver.write("\x1b[2J")  # CSI erase entire screen
         self.refresh(layout=True)
 
     def on_mount(self) -> None:
