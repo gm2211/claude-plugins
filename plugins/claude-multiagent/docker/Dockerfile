@@ -278,7 +278,7 @@ fi
 # ---------------------------------------------------------------------------
 # Merge plugin + statusLine settings into settings.json
 # ---------------------------------------------------------------------------
-MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
+MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}}}}'
 
 if [ ! -f "$SETTINGS" ]; then
   printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
