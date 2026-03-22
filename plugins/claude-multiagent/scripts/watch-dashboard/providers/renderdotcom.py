@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Render.com deploy provider for deploy-watch."""
+"""Render.com deploy provider for deploy-watch.
+
+Auto-discovers all web services in the workspace and fetches recent
+deploys for each, returning them as interleaved JSON-line records
+sorted by time (most recent first).
+"""
 
 import json
 import logging
@@ -40,15 +45,14 @@ except (ImportError, AttributeError):
 
 RENDER_API_BASE = "https://api.render.com/v1"
 TIMEOUT = 10
+DEPLOYS_PER_SERVICE = 5
+MAX_TOTAL_RECORDS = 20
 
 
 def get_config_from_env():
     """Read provider config from DEPLOY_WATCH_* environment variables."""
-    service_id = os.environ.get("DEPLOY_WATCH_SERVICEID", "")
-    _log.debug("DEPLOY_WATCH_SERVICEID %s", "set" if service_id else "NOT SET")
-    if not service_id:
-        print("Error: DEPLOY_WATCH_SERVICEID is not set", file=sys.stderr)
-        sys.exit(1)
+    owner_id = os.environ.get("DEPLOY_WATCH_OWNERID", "")
+    _log.debug("DEPLOY_WATCH_OWNERID %s", owner_id or "NOT SET (will list all)")
 
     api_key_env = os.environ.get("DEPLOY_WATCH_APIKEYENV", "RENDER_DOT_COM_TOK")
     api_key = os.environ.get(api_key_env, "")
@@ -62,7 +66,7 @@ def get_config_from_env():
         )
         sys.exit(1)
 
-    return service_id, api_key
+    return owner_id, api_key
 
 
 def api_get(path, api_key):
@@ -88,6 +92,25 @@ def api_get(path, api_key):
         sys.exit(1)
 
 
+def fetch_services(api_key, owner_id=""):
+    """Discover all web services, optionally filtered by owner/workspace."""
+    params = "?type=web_service&limit=100"
+    if owner_id:
+        params += f"&ownerId={owner_id}"
+    data = api_get(f"/services{params}", api_key)
+
+    services = []
+    if isinstance(data, list):
+        for item in data:
+            # API may return {service: {...}} wrappers or flat objects
+            svc = item.get("service", item) if isinstance(item, dict) else item
+            if svc.get("type") == "web_service":
+                services.append(svc)
+
+    _log.debug("Discovered %d web services", len(services))
+    return services
+
+
 STATUS_MAP = {
     "created": "pending",
     "build_in_progress": "building",
@@ -99,13 +122,25 @@ STATUS_MAP = {
     "deactivated": "cancelled",
 }
 
+_BRANCH_ENV_MAP = {
+    "main": "prod",
+    "master": "prod",
+    "production": "prod",
+    "staging": "staging",
+    "stg": "staging",
+    "dev": "dev",
+    "develop": "dev",
+}
+
+
+def _infer_environment(branch: str) -> str:
+    """Infer environment from the service's configured branch."""
+    key = branch.lower().strip()
+    return _BRANCH_ENV_MAP.get(key, key)
+
 
 def iso_to_epoch(iso_str):
-    """Convert an ISO 8601 timestamp to unix epoch string.
-
-    Handles formats like 2024-01-15T12:30:00Z and 2024-01-15T12:30:00.000Z.
-    Returns empty string if the input is None or empty.
-    """
+    """Convert an ISO 8601 timestamp to unix epoch string."""
     if not iso_str:
         return ""
     s = iso_str.replace("Z", "+00:00")
@@ -116,6 +151,85 @@ def iso_to_epoch(iso_str):
         return ""
 
 
+def _unwrap_deploys(deploys_raw):
+    """Unwrap deploy objects from API response."""
+    deploys = []
+    if isinstance(deploys_raw, list):
+        for item in deploys_raw:
+            if isinstance(item, dict) and "deploy" in item:
+                deploys.append(item["deploy"])
+            else:
+                deploys.append(item)
+    return deploys
+
+
+def _build_record(deploy, svc_id, svc_name, svc_url, environment):
+    """Build a single deploy record dict."""
+    status_raw = deploy.get("status", "")
+    mapped_status = STATUS_MAP.get(status_raw, status_raw)
+
+    commit_obj = deploy.get("commit", {}) or {}
+    created_at = iso_to_epoch(deploy.get("createdAt"))
+    finished_at = iso_to_epoch(deploy.get("finishedAt"))
+
+    commit_id = commit_obj.get("id", "")
+    commit_msg = (commit_obj.get("message", "") or "").split("\n")[0]
+
+    deploy_id = deploy.get("id", "")
+
+    record = {
+        "commit": commit_id[:7] if commit_id else "",
+        "tag": "",
+        "message": commit_msg,
+        "author": deploy.get("creator", {}).get("name", "")
+                  or deploy.get("creator", {}).get("email", ""),
+        "environment": environment,
+        "service_name": svc_name,
+    }
+
+    # Map build/deploy status
+    if mapped_status in ("pending", "building"):
+        record["build_status"] = mapped_status
+        record["deploy_status"] = "pending"
+    elif mapped_status == "deploying":
+        record["build_status"] = "success"
+        record["deploy_status"] = "deploying"
+    elif mapped_status == "live":
+        record["build_status"] = "success"
+        record["deploy_status"] = "live"
+    elif mapped_status == "failed":
+        if status_raw == "build_failed":
+            record["build_status"] = "failed"
+            record["deploy_status"] = "pending"
+        else:
+            record["build_status"] = "success"
+            record["deploy_status"] = "failed"
+    elif mapped_status == "cancelled":
+        record["build_status"] = "cancelled"
+        record["deploy_status"] = "cancelled"
+    else:
+        record["build_status"] = mapped_status
+        record["deploy_status"] = mapped_status
+
+    # Timestamps
+    record["build_started"] = created_at
+    if mapped_status == "live" and finished_at:
+        record["deploy_finished"] = finished_at
+    else:
+        record["deploy_finished"] = ""
+
+    if svc_url:
+        record["service_url"] = svc_url
+
+    # Render deploy dashboard URL
+    if deploy_id:
+        record["deploy_url"] = (
+            f"https://dashboard.render.com/web/{svc_id}/deploys/{deploy_id}"
+        )
+
+    return record
+
+
 def cmd_name():
     print("Render")
 
@@ -124,9 +238,10 @@ def cmd_config():
     config = {
         "fields": [
             {
-                "key": "serviceId",
-                "label": "Service ID (srv-xxx)",
-                "required": True,
+                "key": "ownerId",
+                "label": "Owner/Team ID (tea-xxx, optional)",
+                "required": False,
+                "default": "",
             },
             {
                 "key": "apiKeyEnv",
@@ -139,109 +254,48 @@ def cmd_config():
     print(json.dumps(config))
 
 
-def _infer_environment(service_name: str) -> str:
-    """Infer environment from a service name string."""
-    name = service_name.lower()
-    if "prod" in name or "production" in name:
-        return "prod"
-    if "staging" in name or "stg" in name:
-        return "staging"
-    if "dev" in name or "development" in name or "preview" in name:
-        return "dev"
-    return ""
-
-
 def cmd_list():
-    service_id, api_key = get_config_from_env()
+    owner_id, api_key = get_config_from_env()
 
-    # Get service details for the URL and environment inference
-    service_url = ""
-    service_name = ""
-    try:
-        service = api_get(f"/services/{service_id}", api_key)
-        if isinstance(service, dict):
-            service_url = (
-                service.get("serviceDetails", {}).get("url", "")
-                or service.get("url", "")
+    services = fetch_services(api_key, owner_id)
+    if not services:
+        _log.debug("No web services found")
+        return
+
+    # Collect deploys from all services with sort key
+    all_deploys = []  # (iso_timestamp, record)
+
+    for svc in services:
+        svc_id = svc["id"]
+        svc_name = svc.get("name", "")
+        svc_url = (
+            svc.get("serviceDetails", {}).get("url", "")
+            or svc.get("url", "")
+        )
+        branch = svc.get("branch", "")
+        environment = _infer_environment(branch)
+
+        try:
+            deploys_raw = api_get(
+                f"/services/{svc_id}/deploys?limit={DEPLOYS_PER_SERVICE}",
+                api_key,
             )
-            service_name = service.get("name", "")
-    except SystemExit:
-        _log.warning("Failed to fetch service details (non-fatal)")
+        except SystemExit:
+            _log.warning("Failed to fetch deploys for %s (non-fatal)", svc_id)
+            continue
 
-    environment = _infer_environment(service_name)
+        for deploy in _unwrap_deploys(deploys_raw):
+            record = _build_record(deploy, svc_id, svc_name, svc_url, environment)
+            sort_key = deploy.get("createdAt", "")
+            all_deploys.append((sort_key, record))
 
-    # Get recent deploys
-    deploys_raw = api_get(f"/services/{service_id}/deploys?limit=10", api_key)
-
-    # The API returns a list of {deploy: ...} wrapper objects
-    deploys = []
-    if isinstance(deploys_raw, list):
-        for item in deploys_raw:
-            if isinstance(item, dict) and "deploy" in item:
-                deploys.append(item["deploy"])
-            else:
-                deploys.append(item)
-
-    _log.debug("Parsed %d deploy records", len(deploys))
-
-    for deploy in deploys:
-        status_raw = deploy.get("status", "")
-        mapped_status = STATUS_MAP.get(status_raw, status_raw)
-
-        commit_obj = deploy.get("commit", {}) or {}
-
-        # Build timestamps
-        created_at = iso_to_epoch(deploy.get("createdAt"))
-        finished_at = iso_to_epoch(deploy.get("finishedAt"))
-
-        # Extract commit info
-        commit_id = commit_obj.get("id", "")
-        commit_msg = (commit_obj.get("message", "") or "").split("\n")[0]
-
-        record = {
-            "commit": commit_id[:7] if commit_id else "",
-            "tag": "",
-            "message": commit_msg,
-            "author": deploy.get("creator", {}).get("name", "")
-                      or deploy.get("creator", {}).get("email", ""),
-            "environment": environment,
-        }
-
-        # Map build/deploy status
-        if mapped_status in ("pending", "building"):
-            record["build_status"] = mapped_status
-            record["deploy_status"] = "pending"
-        elif mapped_status == "deploying":
-            record["build_status"] = "success"
-            record["deploy_status"] = "deploying"
-        elif mapped_status == "live":
-            record["build_status"] = "success"
-            record["deploy_status"] = "live"
-        elif mapped_status == "failed":
-            if status_raw == "build_failed":
-                record["build_status"] = "failed"
-                record["deploy_status"] = "pending"
-            else:
-                record["build_status"] = "success"
-                record["deploy_status"] = "failed"
-        elif mapped_status == "cancelled":
-            record["build_status"] = "cancelled"
-            record["deploy_status"] = "cancelled"
-        else:
-            record["build_status"] = mapped_status
-            record["deploy_status"] = mapped_status
-
-        # Timestamps — build_started = createdAt, deploy_finished = finishedAt
-        record["build_started"] = created_at
-        if mapped_status in ("live",) and finished_at:
-            record["deploy_finished"] = finished_at
-        else:
-            record["deploy_finished"] = ""
-
-        if service_url:
-            record["service_url"] = service_url
-
+    # Sort by time descending, truncate
+    all_deploys.sort(key=lambda x: x[0], reverse=True)
+    for _, record in all_deploys[:MAX_TOTAL_RECORDS]:
         print(json.dumps(record))
+
+    _log.debug("Emitted %d records from %d services",
+               min(len(all_deploys), MAX_TOTAL_RECORDS), len(services))
 
 
 def main():

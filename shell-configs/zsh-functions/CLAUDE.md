@@ -46,6 +46,5 @@ If you used a symlink (recommended), just pull the latest changes and reload you
 | `wt delete [name]` | Worktree remover subcommand. Deletes a worktree under `.worktrees/` (interactive picker if `name` is omitted). Asks for confirmation before delete. |
 | `claude`   | Wraps `wt`/`wt new` for Claude Code. On the default branch, tries `wt` (selector) first; if that fails (no worktrees), falls back to `wt new` (creator); then launches Claude inside the chosen worktree. `claude --skip` / `claude -s` bypasses worktree checks and disables claude-multiagent hooks for that launch. |
 | `clauded`  | Launches Claude inside a Docker sandbox using the `gm-claude-dev` custom template (zellij, nvim, starship, zsh). Runs `docker sandbox run -t gm-claude-dev claude`. |
-| `codex`    | Wraps the `codex` CLI. When running inside Zellij (`$ZELLIJ` is set), automatically passes `--no-alt-screen` so Codex renders inline and Zellij scrollback (`Cmd+s` j/k) works. Outside Zellij, passes through unchanged. |
 | `bdtui`    | Opens `beads-tui` in a new Zellij pane (direction: right). Finds the app under `plugins/claude-multiagent/scripts/beads-tui/` from the git root. Creates a shared `.beads-tui-venv` with `textual` if needed. |
 | `deploy-watch` / `dw` | Opens `watch-dashboard` in a new Zellij pane (direction: down). Same venv and discovery logic as `bdtui`. |

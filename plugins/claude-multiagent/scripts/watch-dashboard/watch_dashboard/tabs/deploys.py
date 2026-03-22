@@ -130,7 +130,7 @@ class DeploysTab(Vertical):
     def on_mount(self) -> None:
         table = self.query_one("#deploy-table", DataTable)
         table.mouse_hover = False
-        table.add_columns("Commit", "Version", "Env", "Message", "Build", "Deploy", "Elapsed")
+        table.add_columns("Commit", "Version", "Service", "Env", "Message", "Build", "Deploy", "Elapsed")
         self._refresh_data()
 
     def get_selected_url(self) -> str:
@@ -236,7 +236,7 @@ class DeploysTab(Vertical):
         """Populate the DataTable with cached records."""
         table = self.query_one("#deploy-table", DataTable)
         table.clear(columns=True)
-        table.add_columns("Commit", "Version", "Env", "Message", "Build", "Deploy", "Elapsed")
+        table.add_columns("Commit", "Version", "Service", "Env", "Message", "Build", "Deploy", "Elapsed")
         self._urls = []
 
         records = self._cached_records
@@ -246,20 +246,16 @@ class DeploysTab(Vertical):
                 self._show_unconfigured()
                 return
 
-        # Service URL display
-        service_url = ""
-        for rec in records:
-            if rec.get("service_url"):
-                service_url = rec["service_url"]
-                break
-        url_widget = self.query_one("#deploy-service-url", Static)
-        url_widget.update(Text(service_url, style="#89b4fa") if service_url else "")
+        # Clear service URL header (multiple services makes it noisy)
+        self.query_one("#deploy-service-url", Static).update("")
         self.query_one("#deploy-env-summary", Static).update(self._environment_summary(records))
 
         for rec in records:
             commit = Text(rec.get("commit", "")[:7], style="bold")
             version_str = rec.get("tag", "") or rec.get("version", "")
             version = Text(version_str, style="#cba6f7") if version_str else Text("")
+            svc_name = rec.get("service_name", "")
+            service = Text(svc_name, style="bold") if svc_name else Text("")
             env = _env_text(rec.get("environment", ""))
             msg = rec.get("message", "")
             if len(msg) > 50:
@@ -269,8 +265,8 @@ class DeploysTab(Vertical):
             deploy = _status_text(rec.get("deploy_status", ""))
             elapsed = Text(format_elapsed(rec), style="dim")
 
-            table.add_row(commit, version, env, message, build, deploy, elapsed)
-            self._urls.append(rec.get("service_url", ""))
+            table.add_row(commit, version, service, env, message, build, deploy, elapsed)
+            self._urls.append(rec.get("deploy_url", "") or rec.get("service_url", ""))
 
         # Status line
         ts = time.strftime("%H:%M:%S")

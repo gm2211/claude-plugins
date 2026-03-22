@@ -53,8 +53,20 @@ if [ -n "$DIR" ] && cd "$DIR" 2>/dev/null && git rev-parse --git-dir >/dev/null 
     GIT_INFO=" \033[90m|\033[0m \033[36m${REPO}\033[0m:\033[33m${BRANCH}${WT}\033[0m \033[90m${TOTAL_CHANGED}f\033[0m \033[32m+${GIT_ADDS}\033[0m \033[31m-${GIT_DELS}\033[0m"
 fi
 
-# Context bar — thin 20-char bar
-BAR_LEN=20
+# Terminal width detection (needed early for bar scaling)
+TERM_COLS="${COLUMNS:-0}"
+if [ "$TERM_COLS" -eq 0 ]; then
+    TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+fi
+
+# Context bar — scales with terminal width
+if [ "$TERM_COLS" -ge 100 ]; then
+    BAR_LEN=20
+elif [ "$TERM_COLS" -ge 60 ]; then
+    BAR_LEN=10
+else
+    BAR_LEN=5
+fi
 if [ "$PCT" -ge 90 ]; then
     BAR_COLOR='\033[31m'  # red
 elif [ "$PCT" -ge 70 ]; then
@@ -76,18 +88,29 @@ if [ "$ADDED" -gt 0 ] || [ "$REMOVED" -gt 0 ]; then
     SESSION_CHANGES=" \033[32m+${ADDED}\033[0m\033[31m-${REMOVED}\033[0m"
 fi
 
-# Sandbox indicator
+# Sandbox indicator — compact at narrow widths
 SANDBOX_STR=""
 if [ "$SANDBOX_ENABLED" = "true" ]; then
-    # Friendly label for known mode values
-    case "$SANDBOX_MODE" in
-        auto-allow)  MODE_LABEL="auto" ;;
-        manual)      MODE_LABEL="manual" ;;
-        *)           MODE_LABEL="${SANDBOX_MODE:-on}" ;;
-    esac
-    SANDBOX_STR=" \033[90m|\033[0m \033[35msandbox:${MODE_LABEL}\033[0m"
+    if [ "$TERM_COLS" -ge 100 ]; then
+        case "$SANDBOX_MODE" in
+            auto-allow)  MODE_LABEL="sandbox:auto" ;;
+            manual)      MODE_LABEL="sandbox:manual" ;;
+            *)           MODE_LABEL="sandbox:${SANDBOX_MODE:-on}" ;;
+        esac
+    else
+        case "$SANDBOX_MODE" in
+            auto-allow)  MODE_LABEL="sbox:a" ;;
+            manual)      MODE_LABEL="sbox:m" ;;
+            *)           MODE_LABEL="sbox:${SANDBOX_MODE:-on}" ;;
+        esac
+    fi
+    SANDBOX_STR=" \033[90m|\033[0m \033[35m${MODE_LABEL}\033[0m"
 elif [ "$SANDBOX_ENABLED" = "false" ]; then
-    SANDBOX_STR=" \033[90m|\033[0m \033[90msandbox:off\033[0m"
+    if [ "$TERM_COLS" -ge 100 ]; then
+        SANDBOX_STR=" \033[90m|\033[0m \033[90msandbox:off\033[0m"
+    else
+        SANDBOX_STR=" \033[90m|\033[0m \033[90msbox:off\033[0m"
+    fi
 fi
 
 # Current working directory (full path, with ~ for home directory)
@@ -95,12 +118,6 @@ DIR_DISPLAY=""
 if [ -n "$DIR" ]; then
     DIR_SHORT=$(echo "$DIR" | sed "s|^$HOME|~|")
     DIR_DISPLAY=" \033[90m|\033[0m \033[34m${DIR_SHORT}\033[0m"
-fi
-
-# Terminal width detection
-TERM_COLS="${COLUMNS:-0}"
-if [ "$TERM_COLS" -eq 0 ]; then
-    TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 fi
 
 # Strip ANSI escapes to measure visible length of a string
@@ -113,22 +130,23 @@ visible_len() {
 }
 
 # Build the full line and measure it, then progressively drop sections if too wide
-# Full line (>=100 cols): TIME MODEL SANDBOX DIR | BAR PCT% | GIT_INFO | COST
-# Narrow (<100 cols): TIME MODEL SANDBOX | BAR PCT% | REPO:BRANCH | COST
+# Cost and context bar are highest priority — they come right after the model name.
+# Full line (>=100 cols): TIME MODEL | BAR PCT% | COST | GIT_INFO SANDBOX DIR
+# Narrow (<100 cols): TIME MODEL | BAR PCT% | COST | REPO:BRANCH
 # Very narrow (<60 cols): MODEL | BAR PCT% | COST
 
 BAR_SECTION="${BAR} ${PCT}%"
+CORE="\033[90m|\033[0m ${BAR_SECTION} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
 
-build_full()   { echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR}${DIR_DISPLAY} \033[90m|\033[0m ${BAR_SECTION}${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"; }
+build_full()   { echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m ${CORE}${GIT_INFO}${SANDBOX_STR}${DIR_DISPLAY}"; }
 build_narrow() {
-    # Trim git info: just REPO:BRANCH, no file/add/del counts
     GIT_SHORT=""
     if [ -n "$REPO" ]; then
         GIT_SHORT=" \033[90m|\033[0m \033[36m${REPO}\033[0m:\033[33m${BRANCH}${WT}\033[0m"
     fi
-    echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR} \033[90m|\033[0m ${BAR_SECTION}${GIT_SHORT} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
+    echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m ${CORE}${GIT_SHORT}"
 }
-build_vnarrow() { echo -e "\033[1m${MODEL}\033[0m \033[90m|\033[0m ${BAR_SECTION} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"; }
+build_vnarrow() { echo -e "\033[1m${MODEL}\033[0m ${CORE}"; }
 
 if [ "$TERM_COLS" -ge 100 ]; then
     LINE=$(build_full)

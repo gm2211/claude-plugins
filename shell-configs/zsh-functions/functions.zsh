@@ -56,24 +56,6 @@ if [[ -o interactive ]]; then
   bindkey '\ef' forward-word
 fi
 
-# codex() — Wrap `codex` CLI to fix scrolling inside Zellij.
-#
-# Root cause: Codex enters the alternate screen buffer (like vim/less).
-# Zellij's own scrollback never sees alt-screen content, so neither mouse
-# scroll nor Zellij scroll mode (Cmd+s j/k) can reach earlier output.
-# `mouse_mode true` in config.kdl does NOT help here — Zellij still cannot
-# scroll into an alt-screen buffer it doesn't own.
-#
-# Fix: pass --no-alt-screen so Codex renders inline in the normal buffer.
-# Zellij's scrollback then captures all output and Cmd+s j/k works normally.
-# This is automatically applied only when running inside Zellij.
-function codex() {
-  if [[ -n "$ZELLIJ" ]]; then
-    command codex --no-alt-screen "$@"
-  else
-    command codex "$@"
-  fi
-}
 
 function ss() {
     local dir="${_CLAUDE_SCREENSHOTS_DIR}"
@@ -1743,11 +1725,17 @@ _ensure_dashboard_venv() {
   fi
 }
 
+# _claude_plugins_scripts_dir — resolve scripts dir, always from claude-plugins repo
+_claude_plugins_scripts_dir() {
+  local base="$HOME/projects/claude-plugins"
+  echo "$base/plugins/claude-multiagent/scripts"
+}
+
 # bdtui — run beads-tui
 # Usage: bdtui [beads-tui args...]
 bdtui() {
   local scripts_dir
-  scripts_dir="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/claude-multiagent/scripts"
+  scripts_dir="$(_claude_plugins_scripts_dir)"
   local beads_dir="$scripts_dir/beads-tui"
   [[ -d "$beads_dir" ]] || { echo "bdtui: beads-tui not found at $beads_dir"; return 1; }
 
@@ -1761,7 +1749,7 @@ bdtui() {
 # Usage: deploy-watch [watch-dashboard args...]
 deploy-watch() {
   local scripts_dir
-  scripts_dir="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/claude-multiagent/scripts"
+  scripts_dir="$(_claude_plugins_scripts_dir)"
   local watch_dir="$scripts_dir/watch-dashboard"
   [[ -d "$watch_dir" ]] || { echo "deploy-watch: watch-dashboard not found at $watch_dir"; return 1; }
 
