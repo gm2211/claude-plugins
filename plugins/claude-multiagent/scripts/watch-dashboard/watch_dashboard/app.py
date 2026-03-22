@@ -110,6 +110,8 @@ class WatchDashboardApp(App):
         )
         # Focus the DataTable in the initially active tab
         self._focus_active_table()
+        # Trigger initial data load after mount settles
+        self.set_timer(0.3, self._refresh_active_tab)
 
     @on(TabbedContent.TabActivated)
     def _on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
