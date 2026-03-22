@@ -1772,3 +1772,107 @@ deploy-watch() {
 }
 
 dw() { deploy-watch "$@"; }
+
+# port — interactive port process explorer
+#   port           → list all listening ports, pick one to inspect/kill
+#   port <number>  → show processes on that port, pick one to kill
+#   port kill <n>  → kill all processes on port <n> immediately
+port() {
+  if ! command -v fzf &>/dev/null; then
+    printf '\033[1;31m[port]\033[0m fzf is required: brew install fzf\n'
+    return 1
+  fi
+
+  local subcmd="$1"
+  local port_num="$2"
+
+  # --- port kill <n> — non-interactive kill ---
+  if [[ "$subcmd" == "kill" ]]; then
+    if [[ -z "$port_num" || ! "$port_num" =~ ^[0-9]+$ ]]; then
+      printf '\033[1;31m[port]\033[0m Usage: port kill <port_number>\n'
+      return 1
+    fi
+    local pids
+    pids=$(lsof -ti :"$port_num" 2>/dev/null)
+    if [[ -z "$pids" ]]; then
+      printf '\033[1;33m[port]\033[0m No processes found on port %s\n' "$port_num"
+      return 0
+    fi
+    printf '\033[1;34m[port]\033[0m Killing processes on port %s: %s\n' "$port_num" "$(echo $pids | tr '\n' ' ')"
+    echo "$pids" | xargs kill -9
+    printf '\033[1;32m[port]\033[0m Done.\n'
+    return 0
+  fi
+
+  # --- port <n> — interactive view for a specific port ---
+  if [[ -n "$subcmd" && "$subcmd" =~ ^[0-9]+$ ]]; then
+    port_num="$subcmd"
+    local lines
+    lines=$(lsof -i :"$port_num" -P -n 2>/dev/null | tail -n +2)
+    if [[ -z "$lines" ]]; then
+      printf '\033[1;33m[port]\033[0m No processes found on port %s\n' "$port_num"
+      return 0
+    fi
+    local header
+    header=$(printf '%-8s %-20s %-6s %-6s %-10s %-8s %s' \
+      "PID" "COMMAND" "USER" "FD" "TYPE" "PROTO" "NAME")
+    local formatted
+    formatted=$(echo "$lines" | awk '{printf "%-8s %-20s %-6s %-6s %-10s %-8s %s\n", $2, $1, $3, $4, $5, $8, $9}')
+    local selected
+    selected=$(echo "$formatted" | fzf \
+      --header="$header"$'\n'"Port $port_num — Enter=kill, Esc=cancel" \
+      --multi \
+      --ansi \
+      --reverse \
+      --no-sort)
+    [[ -z "$selected" ]] && return 0
+    local sel_pids
+    sel_pids=$(echo "$selected" | awk '{print $1}' | sort -u)
+    echo "$sel_pids" | while read -r pid; do
+      local pname
+      pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+      printf '\033[1;34m[port]\033[0m Kill PID %s (%s)? [y/N] ' "$pid" "$pname"
+      read -rsk1 ans
+      printf '\n'
+      if [[ "$ans" =~ ^[Yy]$ ]]; then
+        kill -9 "$pid" 2>/dev/null && \
+          printf '\033[1;32m[port]\033[0m Killed %s\n' "$pid" || \
+          printf '\033[1;31m[port]\033[0m Failed to kill %s (try sudo)\n' "$pid"
+      fi
+    done
+    return 0
+  fi
+
+  # --- port (no args) — list all listening ports interactively ---
+  if [[ -n "$subcmd" ]]; then
+    printf '\033[1;31m[port]\033[0m Usage: port [port_number | kill <port_number>]\n'
+    return 1
+  fi
+
+  local lines
+  lines=$(lsof -i -P -n -sTCP:LISTEN 2>/dev/null | tail -n +2)
+  if [[ -z "$lines" ]]; then
+    printf '\033[1;33m[port]\033[0m No listening ports found.\n'
+    return 0
+  fi
+  local formatted
+  formatted=$(echo "$lines" | awk '{
+    # extract port from NAME field (e.g. *:3000 or 127.0.0.1:8080)
+    split($9, a, ":")
+    port = a[length(a)]
+    printf "%-7s %-22s %-10s %-6s %s\n", port, $1, $2, $3, $9
+  }' | sort -n -k1)
+  local header
+  header=$(printf '%-7s %-22s %-10s %-6s %s' "PORT" "COMMAND" "PID" "USER" "ADDRESS")
+  local selected
+  selected=$(echo "$formatted" | fzf \
+    --header="$header"$'\n'"Enter=inspect port, Esc=cancel" \
+    --ansi \
+    --reverse \
+    --no-sort)
+  [[ -z "$selected" ]] && return 0
+  local chosen_port
+  chosen_port=$(echo "$selected" | awk '{print $1}')
+  # recurse into the single-port view
+  port "$chosen_port"
+}

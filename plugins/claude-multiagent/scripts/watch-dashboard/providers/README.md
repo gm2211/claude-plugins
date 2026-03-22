@@ -7,6 +7,7 @@ Each provider is a script in this directory (`providers/`) that implements three
 | Script          | Platform       | Auth env var (default)  |
 |-----------------|----------------|-------------------------|
 | `renderdotcom`  | Render.com     | `RENDER_DOT_COM_TOK`    |
+| `digitalocean`  | DigitalOcean App Platform | `DIGITALOCEAN_API_TOKEN` |
 | `github-actions`| GitHub Actions | gh CLI (`gh auth login`)|
 | `vercel`        | Vercel         | `VERCEL_TOKEN`          |
 
