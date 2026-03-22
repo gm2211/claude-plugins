@@ -5,3 +5,8 @@
 __pycache__/
 .deploy-watch.json
 .claude-sandbox-mount/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
