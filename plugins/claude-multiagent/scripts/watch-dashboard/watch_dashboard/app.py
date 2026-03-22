@@ -10,7 +10,7 @@ import subprocess
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.events import MouseMove, MouseDown, MouseUp
+from textual.events import MouseMove, MouseDown, MouseUp, Resize
 from textual.widgets import DataTable, Footer, Header, TabbedContent, TabPane
 from textual import on
 
@@ -89,6 +89,10 @@ class WatchDashboardApp(App):
     def on_mouse_up(self, event: MouseUp) -> None:
         event.stop()
         event.prevent_default()
+
+    def on_resize(self, event: Resize) -> None:
+        """Force full repaint after terminal resize to avoid ghost artifacts."""
+        self.refresh(layout=True)
 
     def on_mount(self) -> None:
         self._poll_timer = self.set_interval(
