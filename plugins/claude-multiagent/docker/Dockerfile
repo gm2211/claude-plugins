@@ -14,42 +14,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git jq \
     && rm -rf /var/lib/apt/lists/*
 
-# ADD fetches at build time; Docker invalidates cache when the response changes
-ADD https://api.github.com/repos/gm2211/claude-plugins/git/refs/heads/main /tmp/cache-bust-plugins
 RUN git clone https://github.com/gm2211/claude-plugins.git /plugin-src \
     && cd /plugin-src \
     && git submodule update --init --recursive
 
-ADD https://api.github.com/repos/anthropics/claude-plugins-official/git/refs/heads/main /tmp/cache-bust-official
-RUN git clone https://github.com/anthropics/claude-plugins-official.git /official-src
-
-ADD https://api.github.com/repos/gm2211/specify/git/refs/heads/main /tmp/cache-bust-specify
-RUN git clone https://github.com/gm2211/specify.git /specify-src
-
 RUN <<'BUILDER_SCRIPT'
 set -eux
+VERSION=$(jq -r '.plugins[] | select(.name=="claude-multiagent") | .version' \
+          /plugin-src/.claude-plugin/marketplace.json)
 
-# --- gm2211-plugins: claude-multiagent ---
-GM_VERSION=$(jq -r '.plugins[] | select(.name=="claude-multiagent") | .version' \
-             /plugin-src/.claude-plugin/marketplace.json)
-GM_CACHE="/plugin-cache/cache/gm2211-plugins/claude-multiagent/${GM_VERSION}"
-mkdir -p "${GM_CACHE}"
-cp -a /plugin-src/plugins/claude-multiagent/. "${GM_CACHE}/"
-
-# --- claude-plugins-official: ralph-loop, feature-dev ---
-for PLUGIN in ralph-loop feature-dev; do
-  # These plugins have version: null in marketplace.json — use "latest"
-  PCACHE="/plugin-cache/cache/claude-plugins-official/${PLUGIN}/latest"
-  mkdir -p "${PCACHE}"
-  cp -a "/official-src/plugins/${PLUGIN}/." "${PCACHE}/"
-done
-
-# --- Marketplace manifests (Claude Code validates plugins against these) ---
-mkdir -p /plugin-cache/marketplaces/gm2211-plugins/.claude-plugin
-cp -a /plugin-src/.claude-plugin/. /plugin-cache/marketplaces/gm2211-plugins/.claude-plugin/
-
-mkdir -p /plugin-cache/marketplaces/claude-plugins-official/.claude-plugin
-cp -a /official-src/.claude-plugin/. /plugin-cache/marketplaces/claude-plugins-official/.claude-plugin/
+CACHE_DIR="/plugin-cache/cache/gm2211-plugins/claude-multiagent/${VERSION}"
+mkdir -p "${CACHE_DIR}"
+cp -a /plugin-src/plugins/claude-multiagent/. "${CACHE_DIR}/"
 
 cat > /plugin-cache/installed_plugins.json <<EOJSON
 {
@@ -58,28 +34,8 @@ cat > /plugin-cache/installed_plugins.json <<EOJSON
     "claude-multiagent@gm2211-plugins": [
       {
         "scope": "user",
-        "installPath": "/home/agent/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${GM_VERSION}",
-        "version": "${GM_VERSION}",
-        "installedAt": "2026-01-01T00:00:00.000Z",
-        "lastUpdated": "2026-01-01T00:00:00.000Z",
-        "gitCommitSha": "HEAD"
-      }
-    ],
-    "ralph-loop@claude-plugins-official": [
-      {
-        "scope": "user",
-        "installPath": "/home/agent/.claude/plugins/cache/claude-plugins-official/ralph-loop/latest",
-        "version": "latest",
-        "installedAt": "2026-01-01T00:00:00.000Z",
-        "lastUpdated": "2026-01-01T00:00:00.000Z",
-        "gitCommitSha": "HEAD"
-      }
-    ],
-    "feature-dev@claude-plugins-official": [
-      {
-        "scope": "user",
-        "installPath": "/home/agent/.claude/plugins/cache/claude-plugins-official/feature-dev/latest",
-        "version": "latest",
+        "installPath": "/home/agent/.claude/plugins/cache/gm2211-plugins/claude-multiagent/${VERSION}",
+        "version": "${VERSION}",
         "installedAt": "2026-01-01T00:00:00.000Z",
         "lastUpdated": "2026-01-01T00:00:00.000Z",
         "gitCommitSha": "HEAD"
@@ -91,14 +47,6 @@ EOJSON
 
 cat > /plugin-cache/known_marketplaces.json <<EOJSON
 {
-  "claude-plugins-official": {
-    "source": {
-      "source": "github",
-      "repo": "anthropics/claude-plugins-official"
-    },
-    "installLocation": "/home/agent/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-01-01T00:00:00.000Z"
-  },
   "gm2211-plugins": {
     "source": {
       "source": "github",
@@ -106,19 +54,11 @@ cat > /plugin-cache/known_marketplaces.json <<EOJSON
     },
     "installLocation": "/home/agent/.claude/plugins/marketplaces/gm2211-plugins",
     "lastUpdated": "2026-01-01T00:00:00.000Z"
-  },
-  "claude-plugins-official": {
-    "source": {
-      "source": "github",
-      "repo": "anthropics/claude-plugins-official"
-    },
-    "installLocation": "/home/agent/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-01-01T00:00:00.000Z"
   }
 }
 EOJSON
 
-echo "${GM_VERSION}" > /plugin-cache/.plugin-version
+echo "${VERSION}" > /plugin-cache/.plugin-version
 BUILDER_SCRIPT
 
 # =============================================================================
@@ -129,11 +69,6 @@ FROM docker/sandbox-templates:claude-code
 USER root
 
 ARG TARGETARCH
-
-# ---------------------------------------------------------------------------
-# Update Claude Code to latest version
-# ---------------------------------------------------------------------------
-RUN npm update -g @anthropic-ai/claude-code
 
 # ---------------------------------------------------------------------------
 # System packages beyond the base image
@@ -149,7 +84,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client \
         locales \
         fontconfig \
-        jq \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -179,19 +113,6 @@ RUN command -v gh >/dev/null 2>&1 || { \
         && apt-get update && apt-get install -y gh \
         && rm -rf /var/lib/apt/lists/*; \
     }
-
-# ---------------------------------------------------------------------------
-# DigitalOcean CLI (doctl)
-# ---------------------------------------------------------------------------
-RUN set -eux; \
-    case "${TARGETARCH}" in \
-        amd64) DOCTL_ARCH="amd64"  ;; \
-        arm64) DOCTL_ARCH="arm64"  ;; \
-        *)     echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/digitalocean/doctl/releases/latest/download/doctl-$(curl -fsSL https://api.github.com/repos/digitalocean/doctl/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)-linux-${DOCTL_ARCH}.tar.gz" \
-        | tar xz -C /usr/local/bin; \
-    chmod +x /usr/local/bin/doctl
 
 # ---------------------------------------------------------------------------
 # Dolt (required by bd/beads issue tracker)
@@ -240,25 +161,9 @@ RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminf
         | tic -x -o /usr/share/terminfo -
 
 # ---------------------------------------------------------------------------
-# Specify (sp) — product spec validator
-# ---------------------------------------------------------------------------
-COPY --from=builder /specify-src /home/agent/projects/specify
-RUN ln -sf /home/agent/projects/specify/specify /usr/local/bin/sp
-
-# ---------------------------------------------------------------------------
 # Starship prompt
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
-
-# ---------------------------------------------------------------------------
-# Pre-cache DigitalOcean MCP package (avoids download on first use)
-# ---------------------------------------------------------------------------
-RUN npx -y @digitalocean/mcp --help 2>/dev/null || true
-
-# ---------------------------------------------------------------------------
-# Playwright + browsers (for specify captures & e2e testing)
-# ---------------------------------------------------------------------------
-RUN npx -y playwright install --with-deps chromium
 
 # ---------------------------------------------------------------------------
 # pbcopy wrapper (OSC 52 clipboard passthrough)
@@ -291,7 +196,6 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/agent/.config/zellij/plugins/zjframes.wasm|g' \
          /home/agent/.config/zellij/config.kdl \
     && sed -i '/^copy_command/d' /home/agent/.config/zellij/config.kdl \
-    && sed -i 's/^mouse_mode true/mouse_mode false/' /home/agent/.config/zellij/config.kdl \
     && sed -i 's|file:~/.config/zellij/plugins/zellij-attention.wasm|file:/home/agent/.config/zellij/plugins/zellij-attention.wasm|g' \
          /home/agent/.config/zellij/config.kdl
 
@@ -301,6 +205,11 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
 RUN cat > /home/agent/.zshrc <<'EOZSH'
 # Ensure plugins are enabled (Docker sandbox overwrites settings.json on creation)
 [ -x ~/.local/bin/ensure-plugins.sh ] && ~/.local/bin/ensure-plugins.sh
+
+# Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
+if [[ -z "$ZELLIJ" ]] && [[ $- == *i* ]] && command -v zellij &>/dev/null; then
+    exec zellij
+fi
 
 # Starship prompt
 eval "$(starship init zsh)"
@@ -340,171 +249,36 @@ COPY --from=builder /plugin-cache/ /home/agent/.claude/plugins/
 # (Docker sandbox overwrites settings.json on creation, so we merge at runtime)
 RUN cat > /home/agent/.local/bin/ensure-plugins.sh <<'EOSCRIPT'
 #!/bin/sh
-# Idempotency guard — skip if already run this session
-[ -f /tmp/.ensure-plugins-done ] && return 0 2>/dev/null || [ -f /tmp/.ensure-plugins-done ] && exit 0
-
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
 # ---------------------------------------------------------------------------
-# Install credentials — only copy from host if none exist in container.
-# If the user ran /login inside the sandbox, those creds take precedence.
-#   1. Keychain-extracted temp file (clauded-creds.*) mounted by clauded()
-#   2. Host-mounted ~/.claude/.credentials.json
-#   3. Skip (user will be prompted to authenticate)
+# Install host-mounted config files from .claude-sandbox-mount/
+# (staged by clauded() on the host before sandbox launch)
 # ---------------------------------------------------------------------------
-CREDS_DEST="$HOME/.claude/.credentials.json"
-if [ ! -f "$CREDS_DEST" ]; then
-  CREDS_TMP=$(find / -maxdepth 4 -name "clauded-creds" -type f 2>/dev/null | head -1)
-  if [ -n "$CREDS_TMP" ]; then
-    cp "$CREDS_TMP" "$CREDS_DEST"
-    chmod 600 "$CREDS_DEST"
-  else
-    HOST_CRED=$(find / -maxdepth 5 -path "*/.claude/.credentials.json" -type f \
-                  ! -path "$CREDS_DEST" 2>/dev/null | head -1)
-    if [ -n "$HOST_CRED" ]; then
-      cp "$HOST_CRED" "$CREDS_DEST"
-      chmod 600 "$CREDS_DEST"
-    fi
+MOUNT_DIR=$(find /Users /home -maxdepth 6 -name ".claude-sandbox-mount" -type d 2>/dev/null | head -1)
+if [ -n "$MOUNT_DIR" ]; then
+  # Global CLAUDE.md → ~/.claude/CLAUDE.md
+  if [ -f "$MOUNT_DIR/CLAUDE.md" ]; then
+    cp "$MOUNT_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
   fi
-fi
-
-# ---------------------------------------------------------------------------
-# Install host-mounted config files from ~/.claude (mounted read-only by clauded)
-# The host ~/.claude dir is mounted at its original path (e.g. /Users/<user>/.claude).
-# ---------------------------------------------------------------------------
-HOST_CLAUDE_DIR=$(find / -maxdepth 5 -path "*/.claude/CLAUDE.md" -type f \
-                    ! -path "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-if [ -n "$HOST_CLAUDE_DIR" ]; then
-  # Global CLAUDE.md
-  if [ -f "$HOST_CLAUDE_DIR/CLAUDE.md" ]; then
-    cp "$HOST_CLAUDE_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
-  fi
-  # Statusline script
-  if [ -f "$HOST_CLAUDE_DIR/statusline.sh" ]; then
-    cp "$HOST_CLAUDE_DIR/statusline.sh" "$HOME/.config/claude-status-line/statusline.sh"
+  # Host statusline script → overwrite the baked-in one
+  if [ -f "$MOUNT_DIR/statusline.sh" ]; then
+    cp "$MOUNT_DIR/statusline.sh" "$HOME/.config/claude-status-line/statusline.sh"
     chmod +x "$HOME/.config/claude-status-line/statusline.sh"
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# gh CLI config (mounted read-only by clauded from host ~/.config/gh)
-# Enables git push via HTTPS without re-authenticating each session.
-# ---------------------------------------------------------------------------
-HOST_GH=$(find / -maxdepth 6 -path "*/.config/gh/hosts.yml" -type f \
-            ! -path "$HOME/.config/gh/hosts.yml" 2>/dev/null | head -1)
-HOST_GH_DIR=""
-[ -n "$HOST_GH" ] && HOST_GH_DIR=$(dirname "$HOST_GH")
-if [ -n "$HOST_GH_DIR" ]; then
-  mkdir -p "$HOME/.config/gh"
-  cp "$HOST_GH_DIR"/*.yml "$HOME/.config/gh/" 2>/dev/null
-  chmod 600 "$HOME/.config/gh"/*.yml 2>/dev/null
+# sp (specify) — symlink if the workspace is mounted
+SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
+if [ -n "$SP_RUN" ]; then
+  ln -sf "$SP_RUN" /usr/local/bin/sp
 fi
 
 # ---------------------------------------------------------------------------
-# OAuth token from host's .sandbox-token (created by clauded setup-token flow)
-# The host ~/.claude is mounted read-only, so we can read the token directly.
-# Docker sandbox ignores ENTRYPOINT (PID 1 is sleep infinity), so env vars
-# exported here only affect Bash tool invocations via CLAUDE_ENV_FILE.
-# For Claude's own auth, we must write CLAUDE_CODE_OAUTH_TOKEN to the
-# persistent env file so it's available when Claude's process reads it.
+# Merge plugin + statusLine settings into settings.json
 # ---------------------------------------------------------------------------
-if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -n "$HOST_CLAUDE_DIR" ]; then
-  SANDBOX_TOKEN_FILE="$HOST_CLAUDE_DIR/.sandbox-token"
-  if [ -f "$SANDBOX_TOKEN_FILE" ]; then
-    CLAUDE_CODE_OAUTH_TOKEN=$(cat "$SANDBOX_TOKEN_FILE")
-    export CLAUDE_CODE_OAUTH_TOKEN
-  fi
-fi
-# Persist the token to CLAUDE_ENV_FILE so Claude's Bash tool and process can use it
-if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-  PERSISTENT_ENV="${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}"
-  if [ -f "$PERSISTENT_ENV" ] && ! grep -qF "CLAUDE_CODE_OAUTH_TOKEN" "$PERSISTENT_ENV" 2>/dev/null; then
-    printf 'export CLAUDE_CODE_OAUTH_TOKEN="%s"\n' "$CLAUDE_CODE_OAUTH_TOKEN" >> "$PERSISTENT_ENV"
-  fi
-fi
-
-# Env vars passed via clauded -e KEY=VALUE (mounted as temp file)
-ENV_FILE=$(find /var/folders /tmp -maxdepth 5 -name "clauded-env.*" -type f 2>/dev/null | head -1)
-if [ -n "$ENV_FILE" ] && ! grep -qF "# clauded-env-loaded" "${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}" 2>/dev/null; then
-  . "$ENV_FILE"
-  PERSISTENT_ENV="${CLAUDE_ENV_FILE:-/etc/sandbox-persistent.sh}"
-  if [ -f "$PERSISTENT_ENV" ]; then
-    grep -v '^#!' "$ENV_FILE" >> "$PERSISTENT_ENV"
-    printf '# clauded-env-loaded\n' >> "$PERSISTENT_ENV"
-  fi
-fi
-
-# When CLAUDE_CODE_OAUTH_TOKEN is set, ensure onboarding is marked complete
-# so Claude doesn't prompt for interactive setup despite having a valid token.
-if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-  CLAUDE_JSON="$HOME/.claude.json"
-  if [ ! -f "$CLAUDE_JSON" ] || ! grep -q '"hasCompletedOnboarding"' "$CLAUDE_JSON" 2>/dev/null; then
-    if command -v jq >/dev/null 2>&1 && [ -f "$CLAUDE_JSON" ]; then
-      jq '.hasCompletedOnboarding = true' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" \
-        && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
-    else
-      printf '{"hasCompletedOnboarding":true}\n' > "$CLAUDE_JSON"
-    fi
-  fi
-fi
-
-# specify — inject CLAUDE.md docs so Claude knows about the tool
-CLAUDE_MD="$HOME/.claude/CLAUDE.md"
-SPECIFY_MARKER="<!-- BEGIN SPECIFY -->"
-if [ -x /usr/local/bin/sp ] && ! grep -qF "$SPECIFY_MARKER" "$CLAUDE_MD" 2>/dev/null; then
-  mkdir -p "$(dirname "$CLAUDE_MD")"
-  cat >> "$CLAUDE_MD" <<'EOSPECIFY'
-
-<!-- BEGIN SPECIFY -->
-## Specify — spec-based functional verification
-
-The `sp` command (aliased from `specify`) is available in this sandbox. It turns functional requirements into machine-verifiable specs.
-
-### Quick reference
-
-```bash
-sp spec guide              # authoring guide
-sp spec lint --spec app.spec.yaml
-sp spec validate --spec app.spec.yaml --capture ./captures
-sp cli run --spec app.spec.yaml --output report/
-sp spec generate           # infer spec from captures
-sp spec evolve             # find gaps, suggest improvements
-sp spec export             # generate Playwright/Cypress tests
-sp mcp                     # start MCP server
-sp agent run               # autonomous headless verification
-```
-
-### Key commands
-
-| Command | What |
-|---------|------|
-| `spec validate` | Gap analysis: spec vs captured behavior |
-| `spec generate` | Infer a spec from capture data |
-| `spec evolve` | Find gaps and suggest spec improvements |
-| `spec lint` | Structural validation (no captures needed) |
-| `spec export` | Generate Playwright or Cypress tests from spec |
-| `spec import` | Import existing e2e tests as spec items |
-| `spec sync` | Bidirectional diff: spec vs e2e tests |
-| `cli run` | Run CLI commands defined in spec, validate output |
-| `agent run` | Autonomous headless verification |
-| `mcp` | MCP server for LLM clients |
-
-The specify project source is at /home/agent/projects/specify. Spec format is YAML or JSON. Reports include expected vs actual evidence for every assertion (JSON, Markdown, or HTML output).
-<!-- END SPECIFY -->
-EOSPECIFY
-fi
-
-# ---------------------------------------------------------------------------
-# Merge plugin + statusLine + MCP settings into settings.json
-# ---------------------------------------------------------------------------
-MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true,"ralph-loop@claude-plugins-official":true,"feature-dev@claude-plugins-official":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
-
-# Add DigitalOcean MCP server if API token is available
-if [ -n "$DIGITALOCEAN_API_TOKEN" ]; then
-  MERGE_OBJ=$(printf '%s' "$MERGE_OBJ" | jq --arg token "$DIGITALOCEAN_API_TOKEN" \
-    '. + {"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":$token}}}}')
-fi
+MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"}}'
 
 if [ ! -f "$SETTINGS" ]; then
   printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
@@ -516,43 +290,14 @@ elif command -v jq >/dev/null 2>&1; then
 else
   # Fallback without jq: inject keys if missing
   if ! grep -q '"enabledPlugins"' "$SETTINGS" 2>/dev/null; then
-    sed -i 's/}$/,"enabledPlugins":{"claude-multiagent@gm2211-plugins":true,"ralph-loop@claude-plugins-official":true,"feature-dev@claude-plugins-official":true}}/' "$SETTINGS"
+    sed -i 's/}$/,"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}/' "$SETTINGS"
   fi
   if ! grep -q '"statusLine"' "$SETTINGS" 2>/dev/null; then
     sed -i 's/}$/,"statusLine":{"type":"command","command":"~\/.config\/claude-status-line\/statusline.sh"}}/' "$SETTINGS"
   fi
 fi
-
-# ---------------------------------------------------------------------------
-# Update Claude Code to latest version (once per session, timeout 30s)
-# ---------------------------------------------------------------------------
-timeout 30 npm update -g @anthropic-ai/claude-code >/tmp/claude-update.log 2>&1 || true
-
-touch /tmp/.ensure-plugins-done
-
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
-
-# ---------------------------------------------------------------------------
-# Claude wrapper — docker sandbox runs "claude" directly (no shell, no
-# .zshrc, no CLAUDE_ENV_FILE), so we need a wrapper to run ensure-plugins.sh.
-# Resolve the symlink to the actual binary, then replace the symlink with
-# a wrapper script that calls the resolved path.
-# ---------------------------------------------------------------------------
-RUN <<'WRAP'
-set -eux
-CLAUDE_LINK=$(which claude)
-CLAUDE_REAL=$(readlink -f "$CLAUDE_LINK")
-rm "$CLAUDE_LINK"
-cat > "$CLAUDE_LINK" <<EOF
-#!/bin/sh
-if [ ! -f /tmp/.ensure-plugins-done ] && [ -x /home/agent/.local/bin/ensure-plugins.sh ]; then
-  . /home/agent/.local/bin/ensure-plugins.sh
-fi
-exec "$CLAUDE_REAL" "\$@"
-EOF
-chmod +x "$CLAUDE_LINK"
-WRAP
 
 # beads-tui Python venv
 RUN set -eux; \
@@ -577,20 +322,6 @@ RUN git config --system credential.helper '!/usr/bin/gh auth git-credential' \
 RUN chown -R agent:agent /home/agent
 
 # ---------------------------------------------------------------------------
-# Persistent env file — sourced by Claude's bash tool via CLAUDE_ENV_FILE
-# and by ensure-plugins.sh at zsh startup.  Includes PATH so that tools
-# installed to ~/.local/bin (e.g. sp) are available to Claude.
-# ---------------------------------------------------------------------------
-RUN printf '%s\n' \
-      'export PATH="$HOME/.local/bin:$PATH"' \
-      'if [ ! -f /tmp/.ensure-plugins-done ] && [ -x ~/.local/bin/ensure-plugins.sh ]; then' \
-      '  . ~/.local/bin/ensure-plugins.sh' \
-      '  touch /tmp/.ensure-plugins-done' \
-      'fi' \
-    > /etc/sandbox-persistent.sh \
-    && chmod 666 /etc/sandbox-persistent.sh
-
-# ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
 ENV LANG=en_US.UTF-8
@@ -598,6 +329,5 @@ ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
-ENV CLAUDE_ENV_FILE=/etc/sandbox-persistent.sh
 
 USER agent
