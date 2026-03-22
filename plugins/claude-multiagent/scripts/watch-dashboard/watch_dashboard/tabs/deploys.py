@@ -235,7 +235,8 @@ class DeploysTab(Vertical):
     def _populate_table(self) -> None:
         """Populate the DataTable with cached records."""
         table = self.query_one("#deploy-table", DataTable)
-        table.clear()
+        table.clear(columns=True)
+        table.add_columns("Commit", "Version", "Env", "Message", "Build", "Deploy", "Elapsed")
         self._urls = []
 
         records = self._cached_records

@@ -314,7 +314,8 @@ class ActionsTab(Vertical):
     def _populate_table(self) -> None:
         """Populate the DataTable with cached runs."""
         table = self.query_one("#actions-table", DataTable)
-        table.clear()
+        table.clear(columns=True)
+        table.add_columns("Workflow", "Branch", "Status", "Conclusion", "Started", "Duration", "Commit")
         self._urls = []
 
         if not self._cached_runs and self._fetch_error:
