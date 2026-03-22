@@ -10,7 +10,7 @@ Docker Sandbox handles the lifecycle (workspace mounting, auth, Claude Code laun
 
 ```bash
 # Build the template (from repo root)
-docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
+docker build -t gm-claude-dev -f docker/Dockerfile .
 
 # Launch (mounts current directory as workspace)
 docker sandbox run -t gm-claude-dev claude .
@@ -43,10 +43,10 @@ Plus all configs from `shell-configs/` (zellij layouts, nvim plugins, zsh functi
 
 ```bash
 # From repo root
-docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
+docker build -t gm-claude-dev -f docker/Dockerfile .
 
 # Multi-arch
-docker buildx build --platform linux/amd64,linux/arm64 -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
+docker buildx build --platform linux/amd64,linux/arm64 -t gm-claude-dev -f docker/Dockerfile .
 ```
 
 ## Usage

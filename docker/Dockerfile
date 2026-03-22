@@ -1,7 +1,7 @@
 # =============================================================================
 # Custom Docker Sandbox Template — extends the official Claude Code base
 # =============================================================================
-# Build:  docker build -t gm-claude-dev -f plugins/claude-multiagent/docker/Dockerfile .
+# Build:  docker build -t gm-claude-dev -f docker/Dockerfile .
 # Use:    docker sandbox run -t gm-claude-dev claude .
 # =============================================================================
 

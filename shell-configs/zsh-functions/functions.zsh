@@ -988,7 +988,7 @@ cl() {
 clauded() {
   local _image="gm-claude-dev"
   local _repo="$HOME/projects/claude-plugins"
-  local _dockerfile="plugins/claude-multiagent/docker/Dockerfile"
+  local _dockerfile="docker/Dockerfile"
   local _rebuild=false
   local _no_cache=false
   local _mount=false
