@@ -192,3 +192,21 @@ kitty @ load-config
 
 **Zellij config changes:**
 Requires a zellij session restart -- config reload alone won't pick up changes.
+
+**Codex CLI scroll not working in Zellij:**
+Codex uses the alternate screen buffer (like vim/less). Zellij's scrollback never captures alt-screen content, so neither mouse scroll nor Zellij scroll mode (`Cmd+s` then `j`/`k`) can reach earlier output. `mouse_mode true` does not help here.
+
+Fix: pass `--no-alt-screen` so Codex renders inline in the normal buffer, where Zellij's scrollback captures everything:
+
+```bash
+codex --no-alt-screen
+```
+
+The `codex()` shell wrapper in `zsh-functions/functions.zsh` applies this automatically whenever `$ZELLIJ` is set (i.e. you're inside a Zellij session), so you don't need to remember the flag.
+
+To make it permanent without the wrapper, add this to `~/.codex/config.toml`:
+
+```toml
+[tui]
+alternate_screen = "never"
+```

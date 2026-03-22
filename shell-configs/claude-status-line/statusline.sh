@@ -29,6 +29,9 @@ TIME=$(date '+%H:%M')
 
 # Git info (run from the workspace dir)
 GIT_INFO=""
+REPO=""
+BRANCH=""
+WT=""
 if [ -n "$DIR" ] && cd "$DIR" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1; then
     BRANCH=$(git branch --show-current 2>/dev/null)
     # Detect worktree and get repo name
@@ -94,5 +97,49 @@ if [ -n "$DIR" ]; then
     DIR_DISPLAY=" \033[90m|\033[0m \033[34m${DIR_SHORT}\033[0m"
 fi
 
-# Output single line
-echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR}${DIR_DISPLAY} \033[90m|\033[0m ${BAR} ${PCT}%${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
+# Terminal width detection
+TERM_COLS="${COLUMNS:-0}"
+if [ "$TERM_COLS" -eq 0 ]; then
+    TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+fi
+
+# Strip ANSI escapes to measure visible length of a string
+strip_ansi() {
+    printf '%s' "$1" | sed 's/\x1b\[[0-9;]*m//g'
+}
+visible_len() {
+    str=$(strip_ansi "$1")
+    printf '%s' "${#str}"
+}
+
+# Build the full line and measure it, then progressively drop sections if too wide
+# Full line (>=100 cols): TIME MODEL SANDBOX DIR | BAR PCT% | GIT_INFO | COST
+# Narrow (<100 cols): TIME MODEL SANDBOX | BAR PCT% | REPO:BRANCH | COST
+# Very narrow (<60 cols): MODEL | BAR PCT% | COST
+
+BAR_SECTION="${BAR} ${PCT}%"
+
+build_full()   { echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR}${DIR_DISPLAY} \033[90m|\033[0m ${BAR_SECTION}${GIT_INFO} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"; }
+build_narrow() {
+    # Trim git info: just REPO:BRANCH, no file/add/del counts
+    GIT_SHORT=""
+    if [ -n "$REPO" ]; then
+        GIT_SHORT=" \033[90m|\033[0m \033[36m${REPO}\033[0m:\033[33m${BRANCH}${WT}\033[0m"
+    fi
+    echo -e "\033[90m${TIME}\033[0m \033[1m${MODEL}\033[0m${SANDBOX_STR} \033[90m|\033[0m ${BAR_SECTION}${GIT_SHORT} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"
+}
+build_vnarrow() { echo -e "\033[1m${MODEL}\033[0m \033[90m|\033[0m ${BAR_SECTION} \033[90m|\033[0m \033[33m${COST_FMT}\033[0m"; }
+
+if [ "$TERM_COLS" -ge 100 ]; then
+    LINE=$(build_full)
+    VIS=$(visible_len "$LINE")
+    if [ "$VIS" -le "$TERM_COLS" ]; then
+        echo "$LINE"
+    else
+        echo "$(build_narrow)"
+    fi
+elif [ "$TERM_COLS" -ge 60 ]; then
+    echo "$(build_narrow)"
+else
+    echo "$(build_vnarrow)"
+fi

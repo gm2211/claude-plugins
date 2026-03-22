@@ -92,6 +92,33 @@ impl State {
         if has_completed { Some(NotificationType::Completed) } else { None }
     }
 
+    /// Returns true if there are original_tab_names entries waiting to be
+    /// restored (i.e., their tab positions have no active notifications).
+    pub(crate) fn has_pending_restores(&self) -> bool {
+        self.original_tab_names.keys().any(|pos| {
+            self.get_tab_notification_state(*pos).is_none()
+        })
+    }
+
+    /// Returns true if any tab has a stale icon suffix with no active notification.
+    pub(crate) fn has_stale_icons(&self) -> bool {
+        for tab in &self.tabs {
+            if self.get_tab_notification_state(tab.position).is_some() {
+                continue;
+            }
+            if self.original_tab_names.contains_key(&tab.position) {
+                continue; // will be handled by restore logic
+            }
+            if self.pending_strips.contains(&tab.position) {
+                continue; // already issued a strip, waiting for Zellij to catch up
+            }
+            if self.tab_name_has_icon(&tab.name) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn update_tab_names(&mut self) {
         if self.updating_tabs || !self.config.enabled { return; }
         self.updating_tabs = true;
@@ -195,16 +222,24 @@ impl ZellijPlugin for State {
             }
             Event::TabUpdate(tab_info) => {
                 self.tabs = tab_info;
-                self.check_and_clear_focus();
-                self.clean_stale_notifications();
-                self.update_tab_names();
+                let focus_cleared = self.check_and_clear_focus();
+                let stale_cleaned = self.clean_stale_notifications();
+                if focus_cleared || stale_cleaned || self.has_pending_restores()
+                    || self.has_stale_icons()
+                {
+                    self.update_tab_names();
+                }
                 false
             }
             Event::PaneUpdate(pane_manifest) => {
                 self.panes = pane_manifest;
-                self.check_and_clear_focus();
-                self.clean_stale_notifications();
-                self.update_tab_names();
+                let focus_cleared = self.check_and_clear_focus();
+                let stale_cleaned = self.clean_stale_notifications();
+                if focus_cleared || stale_cleaned || self.has_pending_restores()
+                    || self.has_stale_icons()
+                {
+                    self.update_tab_names();
+                }
                 false
             }
             _ => false,

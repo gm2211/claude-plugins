@@ -56,8 +56,24 @@ if [[ -o interactive ]]; then
   bindkey '\ef' forward-word
 fi
 
-# Preserve terminal scrollback when running Codex inside zellij/kitty.
-# mouse_mode true in zellij/config.kdl handles mouse scrolling in alt screen.
+# codex() — Wrap `codex` CLI to fix scrolling inside Zellij.
+#
+# Root cause: Codex enters the alternate screen buffer (like vim/less).
+# Zellij's own scrollback never sees alt-screen content, so neither mouse
+# scroll nor Zellij scroll mode (Cmd+s j/k) can reach earlier output.
+# `mouse_mode true` in config.kdl does NOT help here — Zellij still cannot
+# scroll into an alt-screen buffer it doesn't own.
+#
+# Fix: pass --no-alt-screen so Codex renders inline in the normal buffer.
+# Zellij's scrollback then captures all output and Cmd+s j/k works normally.
+# This is automatically applied only when running inside Zellij.
+function codex() {
+  if [[ -n "$ZELLIJ" ]]; then
+    command codex --no-alt-screen "$@"
+  else
+    command codex "$@"
+  fi
+}
 
 function ss() {
     local dir="${_CLAUDE_SCREENSHOTS_DIR}"
