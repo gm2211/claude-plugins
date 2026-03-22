@@ -29,8 +29,7 @@ plugins/claude-multiagent/
 │
 ├── skills/                       # Slash-command skills
 │   ├── multiagent-coordinator/   #   /multiagent — orchestrate sub-agents
-│   ├── panes/                    #   /agents-dashboard — manage dashboard panes
-│   └── claude-in-docker/         #   /claude-in-docker — run agents in containers
+│   └── panes/                    #   /agents-dashboard — manage dashboard panes
 │
 └── docs/                         # Additional documentation
 ```
