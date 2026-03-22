@@ -1743,11 +1743,9 @@ _ensure_dashboard_venv() {
   fi
 }
 
-# bdtui — open beads-tui in a Zellij pane (direction: right)
+# bdtui — run beads-tui
 # Usage: bdtui [beads-tui args...]
 bdtui() {
-  [[ -n "${ZELLIJ:-}" ]] || { echo "Not inside Zellij"; return 1; }
-
   local scripts_dir
   scripts_dir="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/claude-multiagent/scripts"
   local beads_dir="$scripts_dir/beads-tui"
@@ -1756,15 +1754,12 @@ bdtui() {
   local venv="$scripts_dir/.beads-tui-venv"
   _ensure_dashboard_venv "$venv" || return 1
 
-  zellij action new-pane --name "beads" --close-on-exit --direction right \
-    -- env PYTHONPATH="$beads_dir" "$venv/bin/python3" -m beads_tui "$@"
+  PYTHONPATH="$beads_dir" "$venv/bin/python3" -m beads_tui "$@"
 }
 
-# deploy-watch / dw — open watch-dashboard in a Zellij pane (direction: down)
+# deploy-watch / dw — run watch-dashboard
 # Usage: deploy-watch [watch-dashboard args...]
 deploy-watch() {
-  [[ -n "${ZELLIJ:-}" ]] || { echo "Not inside Zellij"; return 1; }
-
   local scripts_dir
   scripts_dir="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/claude-multiagent/scripts"
   local watch_dir="$scripts_dir/watch-dashboard"
@@ -1773,8 +1768,7 @@ deploy-watch() {
   local venv="$scripts_dir/.beads-tui-venv"
   _ensure_dashboard_venv "$venv" || return 1
 
-  zellij action new-pane --name "watch" --close-on-exit --direction down \
-    -- env PYTHONPATH="$watch_dir" "$venv/bin/python3" -m watch_dashboard "$@"
+  PYTHONPATH="$watch_dir" "$venv/bin/python3" -m watch_dashboard "$@"
 }
 
 dw() { deploy-watch "$@"; }
