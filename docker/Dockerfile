@@ -207,17 +207,17 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
 # ---------------------------------------------------------------------------
 # Zsh configuration
 # ---------------------------------------------------------------------------
-# ensure-plugins.sh runs from .zshenv (sourced by ALL zsh invocations, including
-# non-interactive subshells that Claude Code uses to run commands). A guard file
-# prevents it from running more than once per container boot.
-RUN cat > /home/agent/.zshenv <<'EOZSHENV'
-_EP_GUARD="/tmp/.ensure-plugins-done"
-if [ ! -f "$_EP_GUARD" ] && [ -x ~/.local/bin/ensure-plugins.sh ]; then
-  ~/.local/bin/ensure-plugins.sh
-  touch "$_EP_GUARD"
-fi
-unset _EP_GUARD
-EOZSHENV
+# ensure-plugins.sh must run once before Claude Code executes any command.
+# We don't know if the sandbox uses bash or zsh, so hook into both.
+# A guard file prevents it from running more than once per container boot.
+RUN printf '%s\n' \
+  '_EP_GUARD="/tmp/.ensure-plugins-done"' \
+  'if [ ! -f "$_EP_GUARD" ] && [ -x ~/.local/bin/ensure-plugins.sh ]; then' \
+  '  ~/.local/bin/ensure-plugins.sh' \
+  '  touch "$_EP_GUARD"' \
+  'fi' \
+  'unset _EP_GUARD' \
+  | tee /home/agent/.zshenv /home/agent/.bashrc /home/agent/.profile > /dev/null
 
 RUN cat > /home/agent/.zshrc <<'EOZSH'
 # Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
