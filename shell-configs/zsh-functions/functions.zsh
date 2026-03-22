@@ -1725,50 +1725,25 @@ HELP
 }
 
 # ---------------------------------------------------------------------------
-# Zellij dashboard pane launchers
+# deploy-watch / dw — run overwatch (gm2211/overwatch)
+# Clones the repo if missing; ensures a venv with textual is present.
 # ---------------------------------------------------------------------------
-
-# Shared helper: ensure venv exists with textual installed
-_ensure_dashboard_venv() {
-  local venv="$1"
+deploy-watch() {
+  local _dir="$HOME/projects/overwatch"
+  if [ ! -d "$_dir" ]; then
+    if [[ ! -o interactive ]]; then
+      echo "deploy-watch: overwatch not found at $_dir"
+      return 1
+    fi
+    printf '\033[1;34m[dw]\033[0m Cloning gm2211/overwatch...\n'
+    git clone https://github.com/gm2211/overwatch.git "$_dir" || return 1
+  fi
+  local venv="$_dir/.venv"
   if [[ ! -x "$venv/bin/python3" ]] || ! "$venv/bin/python3" -c "import textual" 2>/dev/null; then
-    echo "Setting up dashboard venv at $venv ..."
+    printf '\033[1;34m[dw]\033[0m Setting up venv...\n'
     python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
   fi
-}
-
-# _claude_plugins_scripts_dir — resolve scripts dir, always from claude-plugins repo
-_claude_plugins_scripts_dir() {
-  local base="$HOME/projects/claude-plugins"
-  echo "$base/plugins/claude-multiagent/scripts"
-}
-
-# bdtui — run beads-tui
-# Usage: bdtui [beads-tui args...]
-bdtui() {
-  local scripts_dir
-  scripts_dir="$(_claude_plugins_scripts_dir)"
-  local beads_dir="$scripts_dir/beads-tui"
-  [[ -d "$beads_dir" ]] || { echo "bdtui: beads-tui not found at $beads_dir"; return 1; }
-
-  local venv="$scripts_dir/.beads-tui-venv"
-  _ensure_dashboard_venv "$venv" || return 1
-
-  PYTHONPATH="$beads_dir" "$venv/bin/python3" -m beads_tui "$@"
-}
-
-# deploy-watch / dw — run watch-dashboard
-# Usage: deploy-watch [watch-dashboard args...]
-deploy-watch() {
-  local scripts_dir
-  scripts_dir="$(_claude_plugins_scripts_dir)"
-  local watch_dir="$scripts_dir/watch-dashboard"
-  [[ -d "$watch_dir" ]] || { echo "deploy-watch: watch-dashboard not found at $watch_dir"; return 1; }
-
-  local venv="$scripts_dir/.beads-tui-venv"
-  _ensure_dashboard_venv "$venv" || return 1
-
-  PYTHONPATH="$watch_dir" "$venv/bin/python3" -m watch_dashboard "$@"
+  PYTHONPATH="$_dir" "$venv/bin/python3" -m overwatch "$@"
 }
 
 dw() { deploy-watch "$@"; }
