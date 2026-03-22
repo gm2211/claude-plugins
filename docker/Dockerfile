@@ -274,6 +274,15 @@ if [ -n "$MOUNT_DIR" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Clean up host-side dolt server state so bd auto-starts inside the container.
+# The workspace .beads/ dir is mounted from the host and may contain stale
+# PID/port files pointing at the host's dolt server (unreachable from here).
+# ---------------------------------------------------------------------------
+for BEADS_DIR in $(find /Users /home -maxdepth 4 -name ".beads" -type d 2>/dev/null); do
+  rm -f "$BEADS_DIR/dolt-server.pid" "$BEADS_DIR/dolt-server.port" "$BEADS_DIR/dolt-server.lock" 2>/dev/null
+done
+
 # sp (specify) — symlink if the workspace is mounted
 SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
 if [ -n "$SP_RUN" ]; then
