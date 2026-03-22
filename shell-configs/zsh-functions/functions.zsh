@@ -1725,28 +1725,52 @@ HELP
 }
 
 # ---------------------------------------------------------------------------
-# deploy-watch / dw — run overwatch (gm2211/overwatch)
+# overwatch / ow — deploy dashboard TUI (gm2211/overwatch)
 # Clones the repo if missing; ensures a venv with textual is present.
 # ---------------------------------------------------------------------------
-deploy-watch() {
+overwatch() {
   local _dir="$HOME/projects/overwatch"
   if [ ! -d "$_dir" ]; then
     if [[ ! -o interactive ]]; then
-      echo "deploy-watch: overwatch not found at $_dir"
+      echo "overwatch: not found at $_dir"
       return 1
     fi
-    printf '\033[1;34m[dw]\033[0m Cloning gm2211/overwatch...\n'
+    printf '\033[1;34m[ow]\033[0m Cloning gm2211/overwatch...\n'
     git clone https://github.com/gm2211/overwatch.git "$_dir" || return 1
   fi
   local venv="$_dir/.venv"
   if [[ ! -x "$venv/bin/python3" ]] || ! "$venv/bin/python3" -c "import textual" 2>/dev/null; then
-    printf '\033[1;34m[dw]\033[0m Setting up venv...\n'
+    printf '\033[1;34m[ow]\033[0m Setting up venv...\n'
     python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
   fi
   PYTHONPATH="$_dir" "$venv/bin/python3" -m overwatch "$@"
 }
 
-dw() { deploy-watch "$@"; }
+ow() { overwatch "$@"; }
+
+# ---------------------------------------------------------------------------
+# bdtui / bdt — beads TUI (gm2211/beads-tui)
+# Clones the repo if missing; ensures a venv with textual is present.
+# ---------------------------------------------------------------------------
+bdtui() {
+  local _dir="$HOME/projects/beads-tui"
+  if [ ! -d "$_dir" ]; then
+    if [[ ! -o interactive ]]; then
+      echo "bdtui: not found at $_dir"
+      return 1
+    fi
+    printf '\033[1;34m[bdt]\033[0m Cloning gm2211/beads-tui...\n'
+    git clone https://github.com/gm2211/beads-tui.git "$_dir" || return 1
+  fi
+  local venv="$_dir/.venv"
+  if [[ ! -x "$venv/bin/python3" ]] || ! "$venv/bin/python3" -c "import textual" 2>/dev/null; then
+    printf '\033[1;34m[bdt]\033[0m Setting up venv...\n'
+    python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
+  fi
+  PYTHONPATH="$_dir" "$venv/bin/python3" -m beads_tui "$@"
+}
+
+bdt() { bdtui "$@"; }
 
 # port — interactive port process explorer
 #   port           → list all listening ports, pick one to inspect/kill
