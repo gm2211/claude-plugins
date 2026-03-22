@@ -1,0 +1,547 @@
+# ===========================================================================
+#  ~/.zshrc
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+#  Oh My Zsh
+# ---------------------------------------------------------------------------
+export ZSH_COMPDUMP="$HOME/.config/zsh/.zcompdump"
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="minimal-git"
+
+plugins=(
+    zsh-completions
+    git
+    autojump
+    gradle
+)
+
+source "$ZSH/oh-my-zsh.sh"
+
+# ---------------------------------------------------------------------------
+#  Locale
+# ---------------------------------------------------------------------------
+export LANG=en_GB.UTF-8
+export LC_CTYPE=en_GB.UTF-8
+
+# ---------------------------------------------------------------------------
+#  PATH
+# ---------------------------------------------------------------------------
+export PATH="/opt/homebrew/bin:$PATH"
+export PATH="/opt/homebrew/sbin:$PATH"
+export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
+export PATH="$(ruby -e 'puts Gem.bindir'):$PATH"
+export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="/Applications/Xcode.app/Contents/Developer/usr/bin:$PATH"
+export PATH="$HOME/.jenv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+export PATH="${SPARK_HOME}/bin:$PATH"
+export PATH="$PATH:$HOME/Library/Application Support/Coursier/bin"
+export PATH="$PATH:$HOME/.local/bin"
+export PATH="$PATH:$HOME/.lmstudio/bin"
+export PATH="$PATH:/Applications/IntelliJ IDEA.app/Contents/MacOS"
+export PATH="$HOME/.codeium/windsurf/bin:$PATH"
+export PATH="$HOME/.opencode/bin:$PATH"
+
+# ---------------------------------------------------------------------------
+#  Environment variables
+# ---------------------------------------------------------------------------
+export KUBE_CONFIG_PATH="$HOME/.kube/config"
+export GOROOT="$(brew --prefix golang)/libexec"
+export PATH="$PATH:$GOROOT/bin"
+
+# Exported because MCP servers read these from the environment at startup.
+export GH_TOKEN=$(gh auth token 2>/dev/null)
+export DIGITALOCEAN_API_TOKEN=$(doctl auth token 2>/dev/null)
+export RENDER_API_KEY=$(security find-generic-password -a render -s render-api-key -w 2>/dev/null)
+export RENDER_API_KEY_HUDSON=$(security find-generic-password -a render -s render-api-key-hudson -w 2>/dev/null)
+
+# ---------------------------------------------------------------------------
+#  Completions
+# ---------------------------------------------------------------------------
+fpath=(~/.zsh/completions $fpath)
+fpath=($HOME/.docker/completions $fpath)
+autoload -Uz compinit && compinit
+
+source <(kubectl completion zsh)
+source <(entire completion zsh)
+
+# Google Cloud SDK
+if [ -f '/opt/google-cloud-sdk/completion.zsh.inc' ]; then
+    source '/opt/google-cloud-sdk/completion.zsh.inc'
+fi
+
+# ---------------------------------------------------------------------------
+#  Shell options & key bindings
+# ---------------------------------------------------------------------------
+unsetopt MENU_COMPLETE
+setopt AUTO_LIST AUTO_MENU
+
+# Alt+Left/Right word navigation (Kitty + Zellij)
+bindkey '\e[1;3D' backward-word
+bindkey '\e[1;3C' forward-word
+
+# ---------------------------------------------------------------------------
+#  Aliases: Git
+# ---------------------------------------------------------------------------
+alias gs="git status"
+alias gl="git log --all --graph --decorate --oneline"
+alias gpu="git push -u"
+alias gau="ga -u"
+alias gsu="git stash save -u"
+alias gbu="ggsup"
+alias gw="git worktree"
+alias gwa="git worktree add"
+alias gwr="git worktree remove"
+alias pull="git pull"
+alias gupdate="gco develop && git pull && gco - && git merge develop"
+alias grebase="gco develop && git pull && gco - && git rebase develop"
+
+# git-fuzzy
+alias gfd="git fuzzy diff"
+alias gfa="git fuzzy add"
+alias gfrm="git fuzzy rm"
+alias gfres="git fuzzy reset"
+alias gfco="git fuzzy checkout"
+
+# ---------------------------------------------------------------------------
+#  Aliases: Docker
+# ---------------------------------------------------------------------------
+alias d="docker"
+alias dc="docker-compose"
+alias dm="docker-machine"
+alias dpa="d ps -a"
+alias de="docker-env"
+alias execit="docker exec -it"
+alias dockerKillAndRemoveContainers="docker ps -a | cut -d' ' -f1 | tail -n+2 | xargs -I {} sh -c 'docker kill {}; docker rm {};'"
+
+# Dev environment (docker-compose services)
+alias dev-postgres-up="docker-compose -f docker-compose.postgres.yml up postgres"
+alias dev-postgres-stop="docker-compose -f docker-compose.postgres.yml stop postgres"
+alias dev-postgres-rm="docker-compose -f docker-compose.postgres.yml rm -vf postgres"
+alias dev-contour="grw generateDockerCompose && dev up && dev ps"
+alias dev-up="dev up; docker-compose -f docker-compose.shared.yml up -d contour-backend-foundry; docker-compose -f docker-compose.shared.yml up -d contour-backend-cache; docker-compose -f docker-compose.shared.yml up -d contour-dispatch"
+alias dev-foundry="docker-compose -f docker-compose.foundry-ete.yml"
+alias dev-sql="docker-compose -f docker-compose.sql-ete.yml"
+alias dev-dns="sudo brew services start dnsmasq"
+alias dev-dns-stop="sudo brew services stop dnsmasq"
+alias docker-compose-dns="dev-dns; docker-compose"
+alias contour-foundry="./gradlew contour-backend-foundry:run"
+alias contour-run="./gradlew --parallel waitForDispatch"
+alias jupyter-toree="docker run -i -p 8888:8888 toree"
+
+# ---------------------------------------------------------------------------
+#  Aliases: Gradle
+# ---------------------------------------------------------------------------
+alias grw="./gradlew --continue"
+alias grwi="grw clean cleanIdea idea"
+alias grwb="grw clean build"
+alias grwbcp="grwbc --parallel"
+alias grwd="./gradlew --daemon --continue --parallel --build-cache"
+alias grwd12="./gradlew --daemon --continue --parallel --build-cache -PerrorProneArgs='-Xep:Finally:OFF'"
+alias grwdb="grwd clean build"
+
+# ---------------------------------------------------------------------------
+#  Aliases: General
+# ---------------------------------------------------------------------------
+alias vim="nvim"
+alias nv="nvim"
+alias l='colorls -lAh --sd'
+alias refresh="source ~/.zshrc"
+alias k="kubectl"
+alias bdt="~/projects/beads-tui/run.sh"
+alias stree="/Applications/SourceTree.app/Contents/Resources/stree"
+alias imgcat="~/.iterm/imgcat"
+alias updatedb="sudo /usr/libexec/locate.updatedb"
+alias grun='java org.antlr.v4.gui.TestRig'
+
+# ---------------------------------------------------------------------------
+#  Aliases: macOS system
+# ---------------------------------------------------------------------------
+alias killDock="osascript -e 'quit application \"Dock\"'"
+alias killBar="killall -KILL SystemUIServer"
+alias killPrview="sudo killall launchservicesd && sudo killall Dock"
+alias restartAudioService="sudo kill -9 \`ps ax|grep 'coreaudio[a-z]' | awk '{print \$1}'\`"
+alias restartAudioService2="sudo kextunload /System/Library/Extensions/AppleHDA.kext; sudo kextload /System/Library/Extensions/AppleHDA.kext"
+alias getHostname="scutil --get HostName"
+
+# ---------------------------------------------------------------------------
+#  Functions: Git
+# ---------------------------------------------------------------------------
+function grbb() {
+    git merge-base origin/develop $(git rev-parse head)
+}
+
+function gitRmUntracked() {
+    git clean -fd
+}
+
+function gitPrune() {
+    git checkout ${1:-main}
+    git pull --prune
+    git fetch -p && for branch in $(git branch -vv | grep ': gone]' | gawk '{print $1}'); do git branch -D $branch; done
+}
+
+function gitDiffStats() {
+    git diff --numstat | awk '{ added += $1; removed += $2 } END { print "+" added " -" removed }'
+}
+
+function git-ignore-untracked() {
+    echo "$(git status --porcelain | grep '^??' | cut -c4-)" > .gitignore
+}
+
+function gitSearchStaged() {
+    git diff --cached --name-only -- $1
+}
+
+function gitGrepAllHistory() {
+    if [[ $# -eq 2 ]]; then
+        git rev-list --all --max-count=$2 | xargs git grep "$1"
+    elif [[ $# -eq 1 ]]; then
+        git rev-list --all | xargs git grep "$1"
+    else
+        echo "Usage: $0 <regexp> <optional-max-commit-count>"
+    fi
+}
+
+# Git search: commit that added/removed text (regex)
+function gsearch() {
+    git log -G "$1" --source --all ${@:2}
+}
+
+# Git log search
+function glogs() {
+    git log --all --grep="$1"
+}
+
+# Git log search (walk reflog)
+function gloggs() {
+    git log -g --grep="$1"
+}
+
+# Git grep across all revisions
+function ggr() {
+    git grep "$1" $(git rev-list --all)
+}
+
+# Git tag search: what tag contains a commit
+function gtsearch() {
+    git tag --contains "$1"
+}
+
+# Git commit search: what commit is tagged with a given tag
+function gcsearch() {
+    git show-ref --tag | grep "$1"
+}
+
+# ---------------------------------------------------------------------------
+#  Functions: Docker
+# ---------------------------------------------------------------------------
+function dockerRemoveUntagged() {
+    docker rmi $(docker images | grep "^<none>" | awk "{print $3}")
+}
+
+function dockerClean() {
+    dangling_images=$(docker images -f "dangling=true" -q)
+    echo "Found dangling images: $dangling_images"
+    docker rmi $dangling_images
+
+    dangling_volumes=$(docker volume ls -qf dangling=true)
+    echo "Found dangling volumes: $dangling_volumes"
+    docker volume rm $dangling_volumes
+
+    echo "Clearing exited containers"
+    docker rm $(docker ps --filter status=exited -q)
+}
+
+function dockerRemoveContainers() {
+    containers=$(docker ps -aq)
+    echo "Found containers: $containers"
+    docker rm -f $containers
+}
+
+function removeContainers() {
+    containers=$(docker ps -a -q)
+    if [ -n "$containers" ]; then
+        docker rm $containers
+    fi
+}
+
+function removeImages() {
+    images=$(docker images -q)
+    if [ -n "$images" ]; then
+        docker rmi -f $images
+    fi
+}
+
+function attach() {
+    docker exec -it $1 bash
+}
+
+function docker-env() {
+    eval "$(docker-machine env $1)"
+}
+
+function runit() {
+    if (( # < 2 )) || (( # > 3 )); then
+        echo "$0 <image_name> <command> [optional]<args>"
+        return
+    fi
+    if (( # < 3 )); then
+        docker run -it $1 $2
+    else
+        docker run $3 -it $1 $2
+    fi
+}
+
+function runitEntrySh() {
+    if (( # < 1 )); then
+        echo "$0 <image_name>"
+        return
+    fi
+    docker run --rm -it --entrypoint /bin/sh $1
+}
+
+# ---------------------------------------------------------------------------
+#  Functions: Networking & SSH
+# ---------------------------------------------------------------------------
+# Remember to add GatewayPorts = yes to /etc/ssh/sshd_config
+function reverse_ssh_tunnel_public() {
+    if [[ $# -ne 3 ]]; then
+        echo "usage: $0 remote-port local-port remote-host"
+        return
+    fi
+    ssh -R "0.0.0.0:$1:127.0.0.1:$2" -N "$3"
+}
+
+function reverse_ssh_tunnel() {
+    if [[ $# -ne 3 ]]; then
+        echo "usage: $0 remote-port local-port remote-host"
+        return
+    fi
+    ssh -R "$1:127.0.0.1:$2" -N "$3"
+}
+
+function ssh_tunnel() {
+    if [[ $# -ne 3 ]]; then
+        echo "usage: $0 local-port remote-port remote-host"
+        return
+    fi
+    ssh -L "$1:$3:$2" -N "$3"
+}
+
+function bind() {
+    ssh -L $1:$2:$1 $2 -N
+}
+
+function ping-google() {
+    count=0
+    until ping -c1 www.google.com &>/dev/null; do
+        if [ "$(($count % 10))" = "0" ]; then
+            echo "Still offline. Retry #$count"
+        fi
+        (( count++ ))
+        sleep 0.2
+    done
+    echo "Back online"
+}
+
+function saveCert() {
+    echo -n | openssl s_client -connect "$1" | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > "$2"
+}
+
+# ---------------------------------------------------------------------------
+#  Functions: macOS utilities
+# ---------------------------------------------------------------------------
+function whichPort() {
+    lsof -n -i4TCP:$1 | grep LISTEN
+}
+
+function whichFile() {
+    sudo fs_usage | grep $1
+}
+
+function which-secure-input() {
+    ioreg -l -w 0 | grep SecureInput
+}
+
+function randMac() {
+    openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//'
+}
+
+function setMac() {
+    sudo ifconfig en0 up
+    sudo ifconfig en0 ether $1
+    sudo airport -z
+}
+
+function showMac() {
+    ifconfig en0 ether | grep -oE "([a-z0-9]{2}:){5}[a-z0-9]{2}"
+}
+
+function spoofMac() {
+    echo $(showMac)
+    echo "new mac: "
+    MAC=$(randMac)
+    echo $MAC
+    setMac $MAC
+}
+
+function blueRestart() {
+    sudo kextunload -b com.apple.iokit.BroadcomBluetoothHostControllerUSBTransport
+    sudo kextload -b com.apple.iokit.BroadcomBluetoothHostControllerUSBTransport
+}
+
+# ---------------------------------------------------------------------------
+#  Functions: Text & file utilities
+# ---------------------------------------------------------------------------
+function v() {
+    vim $(fzf)
+}
+
+function wrap() {
+    fold -w $1 -s $2
+}
+
+function randomString() {
+    cat /dev/urandom | env LC_CTYPE=C tr -dc 'a-zA-Z0-9' | fold -w ${1:-32} | head -n ${2:-1}
+}
+
+function dirHash() {
+    find $1 -type f -print0 | sort -z | xargs -0 sha1sum | sha1sum
+}
+
+function dup() {
+    sort $1 | uniq -c | sort --reverse
+}
+
+function findExec() {
+    find . -name "$1" -exec $2 {} \+
+}
+
+function renameall() {
+    if (( # < 2 )); then
+        echo "$0 <regex_pattern> <replacement>"
+        return
+    fi
+    find . -exec rename -n -e "s/$1/$2/" {} +
+    read -q "reply?Are you sure you want to continue? <y/N> "
+    if [[ $reply =~ [yY](es)* ]]; then
+        find . -exec rename -e "s/$1/$2/" {} +
+    fi
+}
+
+function replaceAll() {
+    for file in $(ack $1 -l); do
+        vim -c "%s/$1/$2/gc" -c 'wq' $file
+    done
+}
+
+function count-occurrences() {
+    ext=$1
+    pattern=$2
+    ack $pattern --type-set "$ext":ext:"$ext" --"$ext" -c -l | cut -d ":" -f2 | paste -s -d+ - | bc
+}
+
+function ack-ext() {
+    ext=$1
+    pattern=$2
+    ack $pattern --type-set "$ext":ext:"$ext" --"$ext"
+}
+
+# ---------------------------------------------------------------------------
+#  Functions: Gradle & development
+# ---------------------------------------------------------------------------
+function deps() {
+    if [[ "$#" -lt 1 ]] || [[ "$#" -gt 3 ]]; then
+        echo "Usage: $0 <dependency_name> [optionally: <project_name>] [optionally: <configuration>]"
+        return -1
+    fi
+
+    project_name=""
+    dependency_name=$1
+    configuration="compile"
+
+    if [[ "$#" -ge 2 ]]; then
+        project_name=":$2:"
+    fi
+
+    if [[ "$#" -eq 3 ]]; then
+        configuration=$3
+    fi
+
+    command="./gradlew ${project_name}dependencyInsight --dependency $dependency_name --configuration $configuration"
+    echo "Running: $command"
+    ./gradlew ${project_name}dependencyInsight --dependency $dependency_name --configuration $configuration
+}
+
+function exclude-deps() {
+    sed -e "s/^.*group=/exclude group: '/g" $1 | sed -e "s/,.extension=jar}'/' \/\//g" | sed -e "s/,.name=/', module: '/g" > ${2:-deps.out}
+}
+
+function fgradle() {
+    find . -name "*.gradle" -type f -exec grep -n --color=always $@ {} /dev/null \;
+}
+
+function slslog2() {
+    slslog --template 'service.1:{{printf "%-5s" .Level}} {{printf "%-26s" (printf "[%s]" .Time)}} ({{.Thread}}) -> {{.Origin}}: {{.Message}}{{if .Params}} {{niceMap .Params}}{{end}}{{if .UnsafeParams}} {{niceMap .UnsafeParams}}{{end}}{{if .Stacktrace}}{{println}}{{.Stacktrace}}{{end}}'
+}
+
+function queryLime() {
+    CMD="curl -s -XGET localhost:9200/ri.compass.main.lime.index/$1 -d '$(cat $2)'"
+    echo "Running: "
+    echo $CMD
+    echo ""
+    echo "Result: "
+    eval $CMD | python -mjson.tool
+}
+
+function dev-dns-setup() {
+    conf_path="/usr/local/etc/dnsmasq.conf"
+    brew install dnsmasq
+    sudo cp $conf_path $conf_path"-$(date +%Y%m%d-%H%M%S).bak"
+    echo "no-resolv" | sudo tee $conf_path
+    echo "server=8.8.8.8" | sudo tee -a $conf_path
+    echo "address=/dev/127.0.0.1" | sudo tee -a $conf_path
+    echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/dev
+}
+
+# ---------------------------------------------------------------------------
+#  Kubernetes
+# ---------------------------------------------------------------------------
+[ -f ~/.kubectl_aliases ] && source ~/.kubectl_aliases
+
+function kDel() {
+    if (( # == 1 )); then
+        kubectl delete $(kubectl get $1 -o name)
+    else
+        kubectl delete $(kubectl get $1 -o name | grep $2)
+    fi
+}
+
+# ---------------------------------------------------------------------------
+#  Integrations (colorls, SDKMAN, iTerm2, fzf, atuin)
+# ---------------------------------------------------------------------------
+source $(dirname $(gem which colorls 2>/dev/null))/tab_complete.sh
+
+# SDKMAN — must be near the end
+export SDKMAN_DIR="$HOME/.sdkman"
+[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
+test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh"
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+eval "$(atuin init zsh --disable-up-arrow)"
+
+# ---------------------------------------------------------------------------
+#  Claude-plugins: shell functions (worktrees, ss, deploy-watch, etc.)
+# ---------------------------------------------------------------------------
+source ~/.config/zsh/functions.zsh
+
+# ---------------------------------------------------------------------------
+#  Auto-start Zellij
+# ---------------------------------------------------------------------------
+if [[ -z "$ZELLIJ" ]]; then
+    if command -v zellij &>/dev/null; then
+        zellij attach -c
+    fi
+fi
