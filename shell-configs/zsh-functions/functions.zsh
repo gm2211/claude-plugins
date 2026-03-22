@@ -6,13 +6,24 @@ _CLAUDE_SCREENSHOTS_DIR="/tmp/claude-screenshots"
 alias nv='nvim'
 # sp — wrapper for ~/projects/specify/specify
 # Clones the repo if missing; periodically pulls updates (once per day).
+# In Docker sandboxes, falls back to /usr/local/bin/sp symlink (set up by
+# ensure-plugins.sh from mounted host paths).
 sp() {
   local _sp_dir="$HOME/projects/specify"
   local _sp_bin="$_sp_dir/specify"
   local _sp_stamp="$_sp_dir/.last-update-check"
 
-  # Clone if missing
+  # If the repo dir doesn't exist, try the system-level symlink (Docker sandbox)
   if [ ! -d "$_sp_dir" ]; then
+    local _sys_sp="/usr/local/bin/sp"
+    if [ -x "$_sys_sp" ] && [ ! -L "$_sys_sp" ] || readlink "$_sys_sp" &>/dev/null; then
+      command sp "$@"
+      return $?
+    fi
+    if [[ ! -o interactive ]]; then
+      printf '\033[1;33m[sp]\033[0m specify not found at %s\n' "$_sp_dir"
+      return 1
+    fi
     printf '\033[1;33m[sp]\033[0m specify not found at %s\n' "$_sp_dir"
     printf '\033[1;34m[sp]\033[0m Clone from gm2211/specify? [Y/n] '
     read -rsk1 _ans
@@ -1258,6 +1269,7 @@ clauded() {
     }
 
     [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude:ro"
+    [ -d "$HOME/.codex" ] && _clauded_add_mount "$HOME/.codex:ro"
     [ -d "$HOME/.config/gh" ] && _clauded_add_mount "$HOME/.config/gh:ro"
     # specify (sp) is baked into the gm-claude-dev Docker image — no mount needed
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"

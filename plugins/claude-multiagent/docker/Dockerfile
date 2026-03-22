@@ -161,6 +161,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminf
         | tic -x -o /usr/share/terminfo -
 
 # ---------------------------------------------------------------------------
+# OpenAI Codex CLI
+# ---------------------------------------------------------------------------
+RUN npm install -g @openai/codex
+
+# ---------------------------------------------------------------------------
 # Starship prompt
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
@@ -278,7 +283,7 @@ fi
 # ---------------------------------------------------------------------------
 # Merge plugin + statusLine settings into settings.json
 # ---------------------------------------------------------------------------
-MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}}}}'
+MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}},"codex":{"command":"codex","args":["-m","gpt-5.4","-c","model_reasoning_effort=high","mcp-server"]}}}'
 
 if [ ! -f "$SETTINGS" ]; then
   printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
