@@ -207,17 +207,15 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
 # ---------------------------------------------------------------------------
 # Zsh configuration
 # ---------------------------------------------------------------------------
-# ensure-plugins.sh must run once before Claude Code executes any command.
-# We don't know if the sandbox uses bash or zsh, so hook into both.
-# A guard file prevents it from running more than once per container boot.
-RUN printf '%s\n' \
-  '_EP_GUARD="/tmp/.ensure-plugins-done"' \
-  'if [ ! -f "$_EP_GUARD" ] && [ -x ~/.local/bin/ensure-plugins.sh ]; then' \
-  '  ~/.local/bin/ensure-plugins.sh' \
-  '  touch "$_EP_GUARD"' \
-  'fi' \
-  'unset _EP_GUARD' \
-  | tee /home/agent/.zshenv /home/agent/.bashrc /home/agent/.profile > /dev/null
+# Entrypoint wrapper — runs ensure-plugins.sh once before the base image's CMD.
+# The base image has no ENTRYPOINT, just CMD ["claude","--dangerously-skip-permissions"].
+# Our entrypoint does setup then exec's into whatever CMD the sandbox passes.
+RUN cat > /home/agent/.local/bin/entrypoint.sh <<'EOENTRY'
+#!/bin/sh
+[ -x ~/.local/bin/ensure-plugins.sh ] && ~/.local/bin/ensure-plugins.sh
+exec "$@"
+EOENTRY
+RUN chmod +x /home/agent/.local/bin/entrypoint.sh
 
 RUN cat > /home/agent/.zshrc <<'EOZSH'
 # Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
@@ -354,3 +352,5 @@ ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
 
 USER agent
+
+ENTRYPOINT ["/home/agent/.local/bin/entrypoint.sh"]
