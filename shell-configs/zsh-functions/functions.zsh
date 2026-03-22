@@ -1734,6 +1734,15 @@ HELP
 # Zellij dashboard pane launchers
 # ---------------------------------------------------------------------------
 
+# Shared helper: ensure venv exists with textual installed
+_ensure_dashboard_venv() {
+  local venv="$1"
+  if [[ ! -x "$venv/bin/python3" ]] || ! "$venv/bin/python3" -c "import textual" 2>/dev/null; then
+    echo "Setting up dashboard venv at $venv ..."
+    python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
+  fi
+}
+
 # pane-beads — open beads-tui in a Zellij pane (direction: right)
 # Usage: pane-beads [beads-tui args...]
 pane-beads() {
@@ -1745,10 +1754,7 @@ pane-beads() {
   [[ -d "$beads_dir" ]] || { echo "pane-beads: beads-tui not found at $beads_dir"; return 1; }
 
   local venv="$scripts_dir/.beads-tui-venv"
-  if [[ ! -x "$venv/bin/python3" ]]; then
-    echo "pane-beads: creating venv at $venv ..."
-    python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
-  fi
+  _ensure_dashboard_venv "$venv" || return 1
 
   zellij action new-pane --name "beads" --close-on-exit --direction right \
     -- env PYTHONPATH="$beads_dir" "$venv/bin/python3" -m beads_tui "$@"
@@ -1765,10 +1771,7 @@ pane-watch() {
   [[ -d "$watch_dir" ]] || { echo "pane-watch: watch-dashboard not found at $watch_dir"; return 1; }
 
   local venv="$scripts_dir/.beads-tui-venv"
-  if [[ ! -x "$venv/bin/python3" ]]; then
-    echo "pane-watch: creating venv at $venv ..."
-    python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
-  fi
+  _ensure_dashboard_venv "$venv" || return 1
 
   zellij action new-pane --name "watch" --close-on-exit --direction down \
     -- env PYTHONPATH="$watch_dir" "$venv/bin/python3" -m watch_dashboard "$@"
