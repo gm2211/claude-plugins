@@ -207,10 +207,19 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
 # ---------------------------------------------------------------------------
 # Zsh configuration
 # ---------------------------------------------------------------------------
-RUN cat > /home/agent/.zshrc <<'EOZSH'
-# Ensure plugins are enabled (Docker sandbox overwrites settings.json on creation)
-[ -x ~/.local/bin/ensure-plugins.sh ] && ~/.local/bin/ensure-plugins.sh
+# ensure-plugins.sh runs from .zshenv (sourced by ALL zsh invocations, including
+# non-interactive subshells that Claude Code uses to run commands). A guard file
+# prevents it from running more than once per container boot.
+RUN cat > /home/agent/.zshenv <<'EOZSHENV'
+_EP_GUARD="/tmp/.ensure-plugins-done"
+if [ ! -f "$_EP_GUARD" ] && [ -x ~/.local/bin/ensure-plugins.sh ]; then
+  ~/.local/bin/ensure-plugins.sh
+  touch "$_EP_GUARD"
+fi
+unset _EP_GUARD
+EOZSHENV
 
+RUN cat > /home/agent/.zshrc <<'EOZSH'
 # Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
 if [[ -z "$ZELLIJ" ]] && [[ $- == *i* ]] && command -v zellij &>/dev/null; then
     exec zellij
