@@ -40,6 +40,11 @@ class ProviderPicker(ModalScreen[str | None]):
         margin-bottom: 1;
     }
 
+    ProviderPicker #picker-options {
+        height: auto;
+        max-height: 12;
+    }
+
     ProviderPicker #picker-buttons {
         width: 100%;
         height: auto;
