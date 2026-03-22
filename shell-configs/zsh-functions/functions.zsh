@@ -1729,3 +1729,54 @@ HELP
     command claude --model "openai:$_model_alias" "$@"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# Zellij dashboard pane launchers
+# ---------------------------------------------------------------------------
+
+# pane-beads — open beads-tui in a Zellij pane (direction: right)
+# Usage: pane-beads [beads-tui args...]
+pane-beads() {
+  [[ -n "${ZELLIJ:-}" ]] || { echo "Not inside Zellij"; return 1; }
+
+  local scripts_dir
+  scripts_dir="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/claude-multiagent/scripts"
+  local beads_dir="$scripts_dir/beads-tui"
+  [[ -d "$beads_dir" ]] || { echo "pane-beads: beads-tui not found at $beads_dir"; return 1; }
+
+  local venv="$scripts_dir/.beads-tui-venv"
+  if [[ ! -x "$venv/bin/python3" ]]; then
+    echo "pane-beads: creating venv at $venv ..."
+    python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
+  fi
+
+  zellij action new-pane --name "beads" --close-on-exit --direction right \
+    -- env PYTHONPATH="$beads_dir" "$venv/bin/python3" -m beads_tui "$@"
+}
+
+# pane-watch — open watch-dashboard in a Zellij pane (direction: down)
+# Usage: pane-watch [watch-dashboard args...]
+pane-watch() {
+  [[ -n "${ZELLIJ:-}" ]] || { echo "Not inside Zellij"; return 1; }
+
+  local scripts_dir
+  scripts_dir="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/claude-multiagent/scripts"
+  local watch_dir="$scripts_dir/watch-dashboard"
+  [[ -d "$watch_dir" ]] || { echo "pane-watch: watch-dashboard not found at $watch_dir"; return 1; }
+
+  local venv="$scripts_dir/.beads-tui-venv"
+  if [[ ! -x "$venv/bin/python3" ]]; then
+    echo "pane-watch: creating venv at $venv ..."
+    python3 -m venv "$venv" && "$venv/bin/pip" install --quiet textual || return 1
+  fi
+
+  zellij action new-pane --name "watch" --close-on-exit --direction down \
+    -- env PYTHONPATH="$watch_dir" "$venv/bin/python3" -m watch_dashboard "$@"
+}
+
+# panes — open both beads-tui and watch-dashboard panes
+# Usage: panes [args passed to both]
+panes() {
+  pane-beads "$@"
+  pane-watch "$@"
+}
