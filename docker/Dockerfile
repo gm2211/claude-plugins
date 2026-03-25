@@ -11,7 +11,7 @@
 FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq \
+        ca-certificates curl git jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/gm2211/claude-plugins.git /plugin-src \
@@ -143,7 +143,7 @@ RUN set -eux; \
     chmod +x /usr/local/bin/zellij
 
 # ---------------------------------------------------------------------------
-# Neovim (stable v0.10.x, multi-arch)
+# Neovim (v0.11.x, multi-arch — required by AstroNvim)
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     case "${TARGETARCH}" in \
@@ -151,7 +151,7 @@ RUN set -eux; \
         arm64) NVIM_ARCH="arm64"  ;; \
         *)     echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/neovim/neovim/releases/download/v0.10.4/nvim-linux-${NVIM_ARCH}.tar.gz" \
+    curl -fsSL "https://github.com/neovim/neovim/releases/download/v0.11.1/nvim-linux-${NVIM_ARCH}.tar.gz" \
         | tar xz -C /opt; \
     ln -sf /opt/nvim-linux-${NVIM_ARCH}/bin/nvim /usr/local/bin/nvim
 
@@ -184,12 +184,17 @@ RUN set -eux; \
 # Terraform
 # ---------------------------------------------------------------------------
 RUN set -eux; \
-    curl -fsSL https://apt.releases.hashicorp.com/gpg \
-        | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" \
-        | tee /etc/apt/sources.list.d/hashicorp.list; \
-    apt-get update && apt-get install -y --no-install-recommends terraform \
-    && rm -rf /var/lib/apt/lists/*
+    TF_VERSION=$(curl -fsSL https://api.github.com/repos/hashicorp/terraform/releases/latest | jq -r '.tag_name' | sed 's/^v//'); \
+    case "${TARGETARCH}" in \
+        amd64) TF_ARCH="amd64" ;; \
+        arm64) TF_ARCH="arm64" ;; \
+        *)     echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+    esac; \
+    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_${TF_ARCH}.zip" \
+        -o /tmp/terraform.zip; \
+    unzip -o /tmp/terraform.zip -d /usr/local/bin; \
+    rm /tmp/terraform.zip; \
+    chmod +x /usr/local/bin/terraform
 
 # ---------------------------------------------------------------------------
 # Kitty terminfo (for TERM=xterm-kitty from host)
@@ -302,29 +307,9 @@ SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
 # ---------------------------------------------------------------------------
-# Source env vars staged by clauded() on the host (DOLT_HOST_PORT, tokens, etc.)
+# Env vars are passed via --env-file on `docker sandbox exec`.
+# No staging dir needed — ensure-plugins.sh inherits them directly.
 # ---------------------------------------------------------------------------
-STAGING_ENV=$(find /Users /home -maxdepth 6 -name "clauded-env" -type f 2>/dev/null | head -1)
-if [ -f "$STAGING_ENV" ]; then
-  . "$STAGING_ENV"
-fi
-
-# ---------------------------------------------------------------------------
-# Install host-mounted config files from .claude-sandbox-mount/
-# (staged by clauded() on the host before sandbox launch)
-# ---------------------------------------------------------------------------
-MOUNT_DIR=$(find /Users /home -maxdepth 6 -name ".claude-sandbox-mount" -type d 2>/dev/null | head -1)
-if [ -n "$MOUNT_DIR" ]; then
-  # Global CLAUDE.md → ~/.claude/CLAUDE.md
-  if [ -f "$MOUNT_DIR/CLAUDE.md" ]; then
-    cp "$MOUNT_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
-  fi
-  # Host statusline script → overwrite the baked-in one
-  if [ -f "$MOUNT_DIR/statusline.sh" ]; then
-    cp "$MOUNT_DIR/statusline.sh" "$HOME/.config/claude-status-line/statusline.sh"
-    chmod +x "$HOME/.config/claude-status-line/statusline.sh"
-  fi
-fi
 
 # ---------------------------------------------------------------------------
 # Ensure CLAUDE.md includes bd tool documentation
@@ -377,6 +362,23 @@ if [ -d "$SP_DIR" ] && [ -f "$SP_DIR/dist/src/cli/index.js" ]; then
 exec node "$SP_DIR/dist/src/cli/index.js" "\$@"
 EOSP
   chmod +x /usr/local/bin/sp
+fi
+
+# ---------------------------------------------------------------------------
+# Ensure statusline script is reachable from whatever path settings.json uses.
+# The host settings.json may reference ~/.claude/statusline.sh while the
+# baked-in copy lives at ~/.config/claude-status-line/statusline.sh.
+# ---------------------------------------------------------------------------
+if [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
+  _sl_cmd=$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+  if [ -n "$_sl_cmd" ]; then
+    # Expand ~ to $HOME
+    _sl_path="${_sl_cmd/#\~/$HOME}"
+    if [ ! -f "$_sl_path" ] && [ -f "$HOME/.config/claude-status-line/statusline.sh" ]; then
+      mkdir -p "$(dirname "$_sl_path")"
+      ln -sf "$HOME/.config/claude-status-line/statusline.sh" "$_sl_path"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------

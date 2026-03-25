@@ -1245,48 +1245,39 @@ clauded() {
 
   unfunction _clauded_content_hash 2>/dev/null
 
-  # Staging dir for temp files mounted into the sandbox.
-  find "${TMPDIR:-/tmp}" -maxdepth 1 -name "clauded-staging.*" -type d -mmin +5 -exec rm -rf {} + 2>/dev/null
-
-  local _staging_dir=""
-  _staging_dir="$(mktemp -d -t clauded-staging.XXXXXX)"
-
-  # Write env vars for ensure-plugins.sh to source inside sandbox
-  if [ ${#_env_vars[@]} -gt 0 ]; then
-    for _ev in "${_env_vars[@]}"; do
-      printf 'export %s\n' "$_ev"
-    done > "$_staging_dir/clauded-env"
-    chmod 600 "$_staging_dir/clauded-env"
-  fi
-
   # ---------------------------------------------------------------------------
-  # Extract Claude credentials from macOS Keychain.
-  # Newer Claude Code versions store auth in Keychain instead of
-  # ~/.claude/.credentials.json.  We extract the JSON blob and write it to the
-  # staging dir; ensure-plugins.sh will find it inside the sandbox.
+  # Extract Claude credentials from macOS Keychain into ~/.claude/.credentials.json
+  # so the sandbox can pick them up via the mounted ~/.claude dir.
   # ---------------------------------------------------------------------------
-  if security find-generic-password \
+  local _creds_file="$HOME/.claude/.credentials.json"
+  local _creds_tmp
+  _creds_tmp=$(security find-generic-password \
        -s "Claude Code-credentials" \
        -a "$(whoami)" \
-       -w > "$_staging_dir/clauded-creds" 2>/dev/null; then
-    chmod 600 "$_staging_dir/clauded-creds"
-  else
-    rm -f "$_staging_dir/clauded-creds"
-    if [ -f "$HOME/.claude/.credentials.json" ]; then
-      printf '\033[90m[clauded] Using legacy ~/.claude/.credentials.json\033[0m\n'
-    else
-      printf '\033[1;33m[clauded]\033[0m Warning: no Claude credentials found in Keychain or ~/.claude/.credentials.json\n'
-    fi
+       -w 2>/dev/null)
+  if [ -n "$_creds_tmp" ]; then
+    printf '%s\n' "$_creds_tmp" > "$_creds_file"
+    chmod 600 "$_creds_file"
+  elif [ ! -f "$_creds_file" ]; then
+    printf '\033[1;33m[clauded]\033[0m Warning: no Claude credentials found in Keychain or %s\n' "$_creds_file"
   fi
 
-  # Cleanup helper
-  _clauded_cleanup() { [ -n "$_staging_dir" ] && rm -rf "$_staging_dir" 2>/dev/null; }
+  # Write env vars to a temp file for --env-file; cleaned up on exit
+  local _env_file=""
+  if [ ${#_env_vars[@]} -gt 0 ]; then
+    _env_file="$(mktemp -t clauded-env.XXXXXX)"
+    for _ev in "${_env_vars[@]}"; do
+      printf '%s\n' "$_ev"
+    done > "$_env_file"
+    chmod 600 "$_env_file"
+  fi
+
+  _clauded_cleanup() { [ -n "$_env_file" ] && rm -f "$_env_file" 2>/dev/null; }
   trap '_clauded_cleanup' EXIT INT TERM
 
   # -------------------------------------------------------------------------
   # Extra mount picker — fzf-based directory browser with multiselect.
-  # Called only when creating a new sandbox (mounts can't be added to
-  # existing sandboxes).
+  # Called only when creating a new sandbox (mounts can't be added later).
   # -------------------------------------------------------------------------
   _clauded_prompt_mounts() {
     if ! $_mount; then
@@ -1300,7 +1291,6 @@ clauded() {
       if command -v fzf >/dev/null 2>&1; then
         printf '\033[90m  Tab=toggle  Enter=confirm  Esc=skip\033[0m\n'
         local _selected
-        # Search directories likely to contain projects; fall back to $HOME
         local _search_roots=()
         for _r in "$HOME/projects" "$HOME/src" "$HOME/work" "$HOME/repos"; do
           [ -d "$_r" ] && _search_roots+=("$_r")
@@ -1331,7 +1321,6 @@ clauded() {
         )
         if [ -n "$_selected" ]; then
           while IFS= read -r _dir; do
-            # Expand ~ back to $HOME
             _dir="${_dir/#\~/$HOME}"
             _extra_mounts+=("${_dir}:ro")
             printf '\033[1;34m[clauded]\033[0m  + %s (ro)\n' "$_dir"
@@ -1343,33 +1332,19 @@ clauded() {
     fi
   }
 
-  # Helper: run docker sandbox with extra workspace mounts.
-  # Syntax: _clauded_sandbox_run [flags...] -- [agent_args...]
-  # The agent is always "claude". Workspaces are injected automatically.
-  _clauded_sandbox_run() {
-    local _flags=() _agent_args=() _seen_sep=false
-    for _a in "$@"; do
-      if [[ "$_a" == "--" ]] && ! $_seen_sep; then
-        _seen_sep=true
-      elif $_seen_sep; then
-        _agent_args+=("$_a")
-      else
-        _flags+=("$_a")
-      fi
-    done
-
-    # Build workspace list (skip paths that overlap with $PWD to avoid conflicts)
+  # -------------------------------------------------------------------------
+  # Build workspace list for sandbox creation
+  # -------------------------------------------------------------------------
+  _clauded_build_workspaces() {
     local _pwd_real
     _pwd_real="$(pwd -P)"
-    local _workspaces=(".")
+    _workspaces=(".")
 
     _clauded_add_mount() {
-      local _path="${1%%:*}"  # strip :ro suffix
+      local _path="${1%%:*}"
       local _real
       _real="$(cd "$_path" 2>/dev/null && pwd -P)" || return 0
-      # Skip exact match (docker sandbox already mounts $PWD as ".")
       [ "$_real" = "$_pwd_real" ] && return 0
-      # Skip ancestors of $PWD — sandbox needs write access there for CLAUDE.md
       [[ "$_pwd_real" == "$_real"/* ]] && return 0
       _workspaces+=("$1")
     }
@@ -1377,29 +1352,109 @@ clauded() {
     [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude:ro"
     [ -d "$HOME/.codex" ] && _clauded_add_mount "$HOME/.codex:ro"
     [ -d "$HOME/.config/gh" ] && _clauded_add_mount "$HOME/.config/gh:ro"
-    # specify (sp) — mount host repo so ensure-plugins.sh can symlink it
     [ -d "$HOME/projects/specify" ] && _clauded_add_mount "$HOME/projects/specify:ro"
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
     _clauded_add_mount "${_CLAUDE_SCREENSHOTS_DIR}:ro"
-    # Mount staging dir (contains credentials + env vars as temp files)
-    [ -n "$_staging_dir" ] && [ -d "$_staging_dir" ] && _clauded_add_mount "$_staging_dir:ro"
     for _m in "${_extra_mounts[@]}"; do
       _clauded_add_mount "$_m"
     done
     unfunction _clauded_add_mount 2>/dev/null
-
-    # docker sandbox run [flags] AGENT WORKSPACE... [-- AGENT_ARGS...]
-    local _cmd=(docker sandbox run "${_flags[@]}" claude "${_workspaces[@]}")
-    if [ ${#_agent_args[@]} -gt 0 ]; then
-      _cmd+=(-- "${_agent_args[@]}")
-    fi
-
-    printf '\033[90m[clauded] %s\033[0m\n' "${_cmd[*]}"
-    "${_cmd[@]}"
   }
 
   # -------------------------------------------------------------------------
-  # Interactive sandbox picker — list existing sandboxes + option to create new
+  # Apply .sandbox-network rules to a sandbox
+  # -------------------------------------------------------------------------
+  _clauded_apply_network() {
+    local _sandbox_name="$1"
+    local _pwd_real
+    _pwd_real="$(pwd -P)"
+
+    local _allow_hosts=() _bypass_hosts=()
+    for _ws in "${_workspaces[@]}"; do
+      local _ws_dir="${_ws%%:*}"
+      [ "$_ws_dir" = "." ] && _ws_dir="$_pwd_real"
+      if [ -f "$_ws_dir/.sandbox-network" ]; then
+        while IFS= read -r _line; do
+          _line="${_line%%#*}"
+          _line="${_line// /}"
+          [ -z "$_line" ] && continue
+          if [[ "$_line" == bypass:* ]]; then
+            _bypass_hosts+=("${_line#bypass:}")
+          elif [[ "$_line" == allow:* ]]; then
+            _allow_hosts+=("${_line#allow:}")
+          else
+            _allow_hosts+=("$_line")
+          fi
+        done < "$_ws_dir/.sandbox-network"
+      fi
+    done
+
+    if [ ${#_allow_hosts[@]} -gt 0 ] || [ ${#_bypass_hosts[@]} -gt 0 ]; then
+      local _proxy_args=(docker sandbox network proxy "$_sandbox_name")
+      for _h in "${_allow_hosts[@]}"; do _proxy_args+=(--allow-host "$_h"); done
+      for _h in "${_bypass_hosts[@]}"; do _proxy_args+=(--bypass-host "$_h"); done
+      printf '\033[90m[clauded] Network rules:'
+      [ ${#_allow_hosts[@]} -gt 0 ] && printf ' allow=%s' "${_allow_hosts[*]}"
+      [ ${#_bypass_hosts[@]} -gt 0 ] && printf ' bypass=%s' "${_bypass_hosts[*]}"
+      printf '\033[0m\n'
+      (
+        for _try in 1 2 3 4 5; do
+          sleep 1
+          "${_proxy_args[@]}" 2>/dev/null && break
+        done
+      ) &!
+    fi
+  }
+
+  # -------------------------------------------------------------------------
+  # Create a new sandbox: create → init → apply network → attach
+  # -------------------------------------------------------------------------
+  _clauded_create_and_attach() {
+    local _sandbox_name="claude-$(basename "$(pwd -P)")"
+    local _workspaces=()
+    _clauded_build_workspaces
+
+    printf '\033[90m[clauded] Creating sandbox %s...\033[0m\n' "$_sandbox_name"
+    local _create_cmd=(docker sandbox create -t "$_image" --name "$_sandbox_name" claude "${_workspaces[@]}")
+    printf '\033[90m[clauded] %s\033[0m\n' "${_create_cmd[*]}"
+    "${_create_cmd[@]}" || return 1
+
+    # One-shot init: run ensure-plugins.sh with env vars
+    local _init_args=(docker sandbox exec)
+    [ -n "$_env_file" ] && _init_args+=(--env-file "$_env_file")
+    _init_args+=("$_sandbox_name" /home/agent/.local/bin/ensure-plugins.sh)
+    printf '\033[90m[clauded] Running init...\033[0m\n'
+    "${_init_args[@]}" 2>&1
+
+    # Apply network rules
+    _clauded_apply_network "$_sandbox_name"
+
+    # Attach via exec — zsh will auto-start zellij
+    _clauded_attach "$_sandbox_name" "$@"
+  }
+
+  # -------------------------------------------------------------------------
+  # Attach to a sandbox: exec -it with env vars, workspace dir, zsh
+  # Zellij auto-starts from .zshrc and reattaches to existing sessions.
+  # -------------------------------------------------------------------------
+  _clauded_attach() {
+    local _sandbox_name="$1"; shift
+
+    # Get primary workspace from sandbox metadata
+    local _ws_path
+    _ws_path=$(docker sandbox ls --json 2>/dev/null \
+      | jq -r --arg name "$_sandbox_name" '.vms[] | select(.name==$name) | .workspaces[0] // empty')
+
+    local _exec_args=(-it)
+    [ -n "$_env_file" ] && _exec_args+=(--env-file "$_env_file")
+    [ -n "$_ws_path" ] && _exec_args+=(-w "$_ws_path")
+
+    printf '\033[90m[clauded] docker sandbox exec %s %s /bin/zsh\033[0m\n' "${_exec_args[*]}" "$_sandbox_name"
+    docker sandbox exec "${_exec_args[@]}" "$_sandbox_name" /bin/zsh
+  }
+
+  # -------------------------------------------------------------------------
+  # Interactive sandbox picker
   # -------------------------------------------------------------------------
   local _sandbox_json
   _sandbox_json=$(docker sandbox ls --json 2>/dev/null)
@@ -1415,7 +1470,7 @@ clauded() {
 
   local _n_sandboxes=${#_sb_names[@]}
 
-  # If rebuild happened, remove existing sandbox for this workspace and create fresh
+  # If rebuild happened, remove existing sandbox and create fresh
   if $_did_rebuild; then
     local _sandbox_name="claude-$(basename "$PWD")"
     if docker sandbox ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$_sandbox_name"; then
@@ -1423,19 +1478,16 @@ clauded() {
       docker sandbox rm "$_sandbox_name" 2>/dev/null
     fi
     _clauded_prompt_mounts
-    _clauded_sandbox_run -t "$_image" -- "$@"
+    _clauded_create_and_attach "$@"
   elif (( _n_sandboxes == 0 )); then
-    # No sandboxes — go straight to creating one
     _clauded_prompt_mounts
-    _clauded_sandbox_run -t "$_image" -- "$@"
+    _clauded_create_and_attach "$@"
   else
     # Build menu: existing sandboxes + New + Cancel
     local _items=()
-    local _term_cols=${COLUMNS:-80}
     for (( i=1; i<=${_n_sandboxes}; i++ )); do
       local _color="\033[32m"
       [[ "${_sb_statuses[$i]}" != "running" ]] && _color="\033[33m"
-      # Shorten workspace path to basename to prevent line wrapping
       local _ws_short="${_sb_workspaces[$i]}"
       (( ${#_ws_short} > 30 )) && _ws_short="…${_ws_short[-30,-1]}"
       _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_sb_names[$i]}" "$_color" "${_sb_statuses[$i]}" "$_ws_short")")
@@ -1444,7 +1496,7 @@ clauded() {
     _items+=("Cancel")
 
     # Default selection: sandbox matching current dir, or "+ New sandbox"
-    local _sel=$(( _n_sandboxes + 1 ))  # default to "+ New sandbox"
+    local _sel=$(( _n_sandboxes + 1 ))
     local _cur_sandbox="claude-$(basename "$PWD")"
     for (( i=1; i<=${_n_sandboxes}; i++ )); do
       if [[ "${_sb_names[$i]}" == "$_cur_sandbox" ]]; then
@@ -1495,20 +1547,15 @@ clauded() {
     unfunction _clauded_draw_menu 2>/dev/null
 
     if (( _sel == _n )); then
-      # Cancel
       printf '\033[1;34m[clauded]\033[0m Cancelled.\n'
-      _clauded_cleanup
-      return 0
     elif (( _sel == _n - 1 )); then
-      # New sandbox
       _clauded_prompt_mounts
-      _clauded_sandbox_run -t "$_image" -- "$@"
+      _clauded_create_and_attach "$@"
     else
       # Selected existing sandbox — action picker
       local _chosen="${_sb_names[$_sel]}"
 
-      local _actions=("Resume  — reattach claude session"
-                      "Shell   — open interactive zsh"
+      local _actions=("Attach  — open zsh (reattaches zellij)"
                       "Delete  — remove sandbox"
                       "Cancel")
       local _asel=1
@@ -1556,30 +1603,10 @@ clauded() {
 
       case $_asel in
         1)
-          printf '\033[1;34m[clauded]\033[0m Resuming \033[1m%s\033[0m...\n' "$_chosen"
-          docker sandbox run "$_chosen" -- "$@"
+          printf '\033[1;34m[clauded]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
+          _clauded_attach "$_chosen" "$@"
           ;;
         2)
-          printf '\033[1;34m[clauded]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
-          # Get primary workspace (first in list) from sandbox metadata
-          local _ws_path
-          _ws_path=$(docker sandbox ls --json 2>/dev/null \
-            | jq -r --arg name "$_chosen" '.vms[] | select(.name==$name) | .workspaces[0] // empty')
-          local _exec_args=(-it)
-          if [ -n "$_ws_path" ]; then
-            _exec_args+=(-w "$_ws_path")
-          fi
-          # Forward env vars from staging dir
-          if [ -n "$_staging_dir" ] && [ -f "$_staging_dir/clauded-env" ]; then
-            while IFS='=' read -r _ekey _eval; do
-              [[ "$_ekey" == export* ]] && _ekey="${_ekey#export }"
-              [[ -z "$_ekey" || "$_ekey" == \#* ]] && continue
-              _exec_args+=(-e "${_ekey}=${_eval}")
-            done < "$_staging_dir/clauded-env"
-          fi
-          docker sandbox exec "${_exec_args[@]}" "$_chosen" /bin/zsh
-          ;;
-        3)
           printf '\033[1;33m[clauded]\033[0m Remove \033[1m%s\033[0m? [y/N] ' "$_chosen"
           read -rsk1 _confirm
           printf '\n'
@@ -1598,7 +1625,8 @@ clauded() {
   fi
 
   _clauded_cleanup
-  unfunction _clauded_sandbox_run _clauded_prompt_mounts 2>/dev/null
+  unfunction _clauded_create_and_attach _clauded_attach _clauded_build_workspaces \
+    _clauded_apply_network _clauded_prompt_mounts 2>/dev/null
 }
 
 # cll() — shorthand for clauded (interactive sandbox picker)
