@@ -149,7 +149,6 @@ alias nv="nvim"
 alias l='colorls -lAh --sd'
 alias refresh="source ~/.zshrc"
 alias k="kubectl"
-alias bdt="~/projects/beads-tui/run.sh"
 alias stree="/Applications/SourceTree.app/Contents/Resources/stree"
 alias imgcat="~/.iterm/imgcat"
 alias updatedb="sudo /usr/libexec/locate.updatedb"
@@ -542,6 +541,6 @@ source ~/.config/zsh/functions.zsh
 # ---------------------------------------------------------------------------
 if [[ -z "$ZELLIJ" ]]; then
     if command -v zellij &>/dev/null; then
-        zellij attach -c
+        zellij -l welcome
     fi
 fi

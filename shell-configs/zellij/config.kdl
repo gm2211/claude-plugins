@@ -273,6 +273,8 @@ web_client {
     font "monospace"
 }
 
+default_layout "modern"
+
 default_shell "/bin/zsh"
 
 copy_command "pbcopy"

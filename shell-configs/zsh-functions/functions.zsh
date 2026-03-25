@@ -4,19 +4,18 @@
 _CLAUDE_SCREENSHOTS_DIR="/tmp/claude-screenshots"
 
 alias nv='nvim'
-# sp — wrapper for ~/projects/specify/specify
+# sp — wrapper for ~/projects/specify CLI
 # Clones the repo if missing; periodically pulls updates (once per day).
-# In Docker sandboxes, falls back to /usr/local/bin/sp symlink (set up by
+# In Docker sandboxes, falls back to /usr/local/bin/sp script (set up by
 # ensure-plugins.sh from mounted host paths).
 sp() {
   local _sp_dir="$HOME/projects/specify"
-  local _sp_bin="$_sp_dir/specify"
+  local _sp_wrapper="$_sp_dir/specify"
   local _sp_stamp="$_sp_dir/.last-update-check"
 
-  # If the repo dir doesn't exist, try the system-level symlink (Docker sandbox)
+  # If the repo dir doesn't exist, try the system-level script (Docker sandbox)
   if [ ! -d "$_sp_dir" ]; then
-    local _sys_sp="/usr/local/bin/sp"
-    if [ -x "$_sys_sp" ] && [ ! -L "$_sys_sp" ] || readlink "$_sys_sp" &>/dev/null; then
+    if [ -x "/usr/local/bin/sp" ]; then
       command sp "$@"
       return $?
     fi
@@ -50,12 +49,19 @@ sp() {
     printf '%s' "$_now" > "$_sp_stamp"
   fi
 
-  if [ ! -x "$_sp_bin" ]; then
-    printf '\033[1;31m[sp]\033[0m specify binary not found at %s\n' "$_sp_bin"
-    return 1
+  # Use the specify wrapper (auto-builds TypeScript if needed)
+  if [ -x "$_sp_wrapper" ]; then
+    "$_sp_wrapper" "$@"
+    return $?
   fi
 
-  "$_sp_bin" "$@"
+  # Fallback: run dist directly
+  local _sp_cli="$_sp_dir/dist/src/cli/index.js"
+  if [ ! -f "$_sp_cli" ]; then
+    printf '\033[1;31m[sp]\033[0m specify not found at %s\n' "$_sp_dir"
+    return 1
+  fi
+  node "$_sp_cli" "$@"
 }
 
 # ZLE word-navigation bindings for Kitty + Zellij
@@ -994,6 +1000,7 @@ clauded() {
   local _mount=false
   local _extra_mounts=()
   local _env_vars=()
+  local _forward_ports=()
 
   # Parse flags
   while [[ "$1" == --* || "$1" == -* ]]; do
@@ -1002,6 +1009,7 @@ clauded() {
       --no-cache) _no_cache=true; _rebuild=true; shift ;;
       --mount|-m) _mount=true; shift ;;
       -e)         shift; _env_vars+=("$1"); shift ;;
+      -p)         shift; _forward_ports+=("$1"); shift ;;
       *) break ;;
     esac
   done
@@ -1084,6 +1092,102 @@ clauded() {
       fi
       printf '%s' "$_now" > "$_sp_stamp"
     fi
+  fi
+
+  # Ensure Dolt is running on the host so the sandbox can forward to it.
+  # Looks for .beads/ in the current workspace; starts dolt sql-server if needed.
+  local _beads_dir=""
+  local _beads_candidates=(.beads(N) */.beads(N))
+  for _bd in "${_beads_candidates[@]}"; do
+    [ -d "$_bd/dolt" ] && _beads_dir="$_bd" && break
+  done
+  if [ -n "$_beads_dir" ]; then
+    local _dolt_port=""
+    local _dolt_pid=""
+    # Check if dolt is already running via pid file
+    if [ -f "$_beads_dir/dolt-server.pid" ]; then
+      _dolt_pid=$(<"$_beads_dir/dolt-server.pid")
+      if kill -0 "$_dolt_pid" 2>/dev/null; then
+        _dolt_port=$(<"$_beads_dir/dolt-server.port" 2>/dev/null)
+      fi
+    fi
+    # If PID file says not running, check if port is held by a stale process
+    if [ -z "$_dolt_port" ]; then
+      local _port_pid=""
+      _port_pid=$(lsof -ti :3307 2>/dev/null | head -1)
+      if [ -n "$_port_pid" ]; then
+        local _port_cmd=""
+        _port_cmd=$(ps -p "$_port_pid" -o comm= 2>/dev/null)
+        if [[ "$_port_cmd" == *dolt* ]]; then
+          printf '\033[90m[clauded] Reusing existing Dolt process (pid %s) on port 3307.\033[0m\n' "$_port_pid"
+          _dolt_port=3307
+          _dolt_pid="$_port_pid"
+          echo "$_dolt_pid" > "$_beads_dir/dolt-server.pid"
+          echo "$_dolt_port" > "$_beads_dir/dolt-server.port"
+        else
+          printf '\033[1;33m[clauded]\033[0m Port 3307 in use by %s (pid %s).\n' "$_port_cmd" "$_port_pid"
+          if [ -f "$_beads_dir/dolt-server.log" ]; then
+            printf '\033[90m[clauded] Last log: %s\033[0m\n' "$(tail -1 "$_beads_dir/dolt-server.log")"
+          fi
+          printf '\033[1;34m[clauded]\033[0m Kill it and start Dolt? [Y/n] '
+          read -rsk1 _ans
+          printf '\n'
+          if [[ "$_ans" != [nN] ]]; then
+            kill "$_port_pid" 2>/dev/null
+            sleep 1
+            kill -0 "$_port_pid" 2>/dev/null && kill -9 "$_port_pid" 2>/dev/null
+            # Wait for port to be released
+            local _wait=0
+            while lsof -ti :3307 &>/dev/null && (( _wait < 5 )); do
+              sleep 1
+              (( _wait++ ))
+            done
+            if lsof -ti :3307 &>/dev/null; then
+              printf '\033[1;31m[clauded]\033[0m Port 3307 still in use after kill. Skipping Dolt.\n'
+              _dolt_port="skip"
+            fi
+          else
+            printf '\033[90m[clauded] Skipping Dolt.\033[0m\n'
+            _dolt_port="skip"
+          fi
+        fi
+      fi
+    fi
+    # Start dolt if still no server running
+    if [ -z "$_dolt_port" ]; then
+      _dolt_port=3307
+      printf '\033[1;34m[clauded]\033[0m Starting Dolt server on port %s...\n' "$_dolt_port"
+      nohup dolt sql-server --host 127.0.0.1 --port "$_dolt_port" \
+        --data-dir "$_beads_dir/dolt" > "$_beads_dir/dolt-server.log" 2>&1 &
+      _dolt_pid=$!
+      echo "$_dolt_pid" > "$_beads_dir/dolt-server.pid"
+      echo "$_dolt_port" > "$_beads_dir/dolt-server.port"
+      sleep 1
+      if kill -0 "$_dolt_pid" 2>/dev/null; then
+        printf '\033[1;32m[clauded]\033[0m Dolt server started (pid %s, port %s).\n' "$_dolt_pid" "$_dolt_port"
+      else
+        printf '\033[1;31m[clauded]\033[0m Dolt server failed to start.\n'
+        if [ -f "$_beads_dir/dolt-server.log" ]; then
+          printf '\033[90m[clauded] Log:\033[0m\n'
+          tail -5 "$_beads_dir/dolt-server.log" | while IFS= read -r _line; do
+            printf '\033[90m  %s\033[0m\n' "$_line"
+          done
+        fi
+        _dolt_port=""
+      fi
+    else
+      printf '\033[90m[clauded] Dolt already running (pid %s, port %s)\033[0m\n' "$_dolt_pid" "$_dolt_port"
+    fi
+    if [ -n "$_dolt_port" ] && [ "$_dolt_port" != "skip" ]; then
+      _forward_ports+=("$_dolt_port")
+    fi
+  fi
+
+  # Collect all ports to forward into the sandbox via socat
+  if [ ${#_forward_ports[@]} -gt 0 ]; then
+    # Deduplicate
+    local _unique_ports=($(printf '%s\n' "${_forward_ports[@]}" | sort -un))
+    _env_vars+=("SANDBOX_FORWARD_PORTS=${(j:,:)_unique_ports}")
   fi
 
   # Auto-inject OAuth token — always refresh .credentials.json for the sandbox.
@@ -1263,15 +1367,18 @@ clauded() {
       local _path="${1%%:*}"  # strip :ro suffix
       local _real
       _real="$(cd "$_path" 2>/dev/null && pwd -P)" || return 0
-      # Skip only exact match (docker sandbox already mounts $PWD as ".")
+      # Skip exact match (docker sandbox already mounts $PWD as ".")
       [ "$_real" = "$_pwd_real" ] && return 0
+      # Skip ancestors of $PWD — sandbox needs write access there for CLAUDE.md
+      [[ "$_pwd_real" == "$_real"/* ]] && return 0
       _workspaces+=("$1")
     }
 
     [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude:ro"
     [ -d "$HOME/.codex" ] && _clauded_add_mount "$HOME/.codex:ro"
     [ -d "$HOME/.config/gh" ] && _clauded_add_mount "$HOME/.config/gh:ro"
-    # specify (sp) is baked into the gm-claude-dev Docker image — no mount needed
+    # specify (sp) — mount host repo so ensure-plugins.sh can symlink it
+    [ -d "$HOME/projects/specify" ] && _clauded_add_mount "$HOME/projects/specify:ro"
     mkdir -p "${_CLAUDE_SCREENSHOTS_DIR}"
     _clauded_add_mount "${_CLAUDE_SCREENSHOTS_DIR}:ro"
     # Mount staging dir (contains credentials + env vars as temp files)
@@ -1324,10 +1431,14 @@ clauded() {
   else
     # Build menu: existing sandboxes + New + Cancel
     local _items=()
+    local _term_cols=${COLUMNS:-80}
     for (( i=1; i<=${_n_sandboxes}; i++ )); do
       local _color="\033[32m"
       [[ "${_sb_statuses[$i]}" != "running" ]] && _color="\033[33m"
-      _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_sb_names[$i]}" "$_color" "${_sb_statuses[$i]}" "${_sb_workspaces[$i]}")")
+      # Shorten workspace path to basename to prevent line wrapping
+      local _ws_short="${_sb_workspaces[$i]}"
+      (( ${#_ws_short} > 30 )) && _ws_short="…${_ws_short[-30,-1]}"
+      _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_sb_names[$i]}" "$_color" "${_sb_statuses[$i]}" "$_ws_short")")
     done
     _items+=("\033[1;33m+ New sandbox\033[0m — create for $(basename "$PWD")")
     _items+=("Cancel")
@@ -1348,9 +1459,9 @@ clauded() {
     _clauded_draw_menu() {
       for (( i=1; i<=$_n; i++ )); do
         if (( i == _sel )); then
-          printf '  \033[1;36m❯ %b\033[0m\n' "${_items[$i]}"
+          printf '\033[2K  \033[1;36m❯ %b\033[0m\n' "${_items[$i]}"
         else
-          printf '    %b\n' "${_items[$i]}"
+          printf '\033[2K    %b\n' "${_items[$i]}"
         fi
       done
     }
@@ -1450,7 +1561,23 @@ clauded() {
           ;;
         2)
           printf '\033[1;34m[clauded]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
-          docker sandbox exec -it "$_chosen" /bin/zsh
+          # Get primary workspace (first in list) from sandbox metadata
+          local _ws_path
+          _ws_path=$(docker sandbox ls --json 2>/dev/null \
+            | jq -r --arg name "$_chosen" '.vms[] | select(.name==$name) | .workspaces[0] // empty')
+          local _exec_args=(-it)
+          if [ -n "$_ws_path" ]; then
+            _exec_args+=(-w "$_ws_path")
+          fi
+          # Forward env vars from staging dir
+          if [ -n "$_staging_dir" ] && [ -f "$_staging_dir/clauded-env" ]; then
+            while IFS='=' read -r _ekey _eval; do
+              [[ "$_ekey" == export* ]] && _ekey="${_ekey#export }"
+              [[ -z "$_ekey" || "$_ekey" == \#* ]] && continue
+              _exec_args+=(-e "${_ekey}=${_eval}")
+            done < "$_staging_dir/clauded-env"
+          fi
+          docker sandbox exec "${_exec_args[@]}" "$_chosen" /bin/zsh
           ;;
         3)
           printf '\033[1;33m[clauded]\033[0m Remove \033[1m%s\033[0m? [y/N] ' "$_chosen"
@@ -1875,3 +2002,84 @@ port() {
   # recurse into the single-port view
   port "$chosen_port"
 }
+
+# filelock — interactive file lock explorer
+#   filelock <file>       → show processes holding the file, pick one to kill
+#   filelock kill <file>  → kill all processes holding the file immediately
+filelock() {
+  if ! command -v fzf &>/dev/null; then
+    printf '\033[1;31m[filelock]\033[0m fzf is required: brew install fzf\n'
+    return 1
+  fi
+
+  local subcmd="$1"
+  local target="$2"
+
+  # --- filelock kill <file> — non-interactive kill ---
+  if [[ "$subcmd" == "kill" ]]; then
+    if [[ -z "$target" ]]; then
+      printf '\033[1;31m[filelock]\033[0m Usage: filelock kill <file>\n'
+      return 1
+    fi
+    target=$(realpath "$target" 2>/dev/null || echo "$target")
+    local pids
+    pids=$(lsof -t "$target" 2>/dev/null)
+    if [[ -z "$pids" ]]; then
+      printf '\033[1;33m[filelock]\033[0m No processes found holding %s\n' "$target"
+      return 0
+    fi
+    printf '\033[1;34m[filelock]\033[0m Killing processes holding %s: %s\n' "$target" "$(echo $pids | tr '\n' ' ')"
+    echo "$pids" | xargs kill -9
+    printf '\033[1;32m[filelock]\033[0m Done.\n'
+    return 0
+  fi
+
+  # --- filelock <file> — interactive view ---
+  if [[ -n "$subcmd" ]]; then
+    target="$subcmd"
+    target=$(realpath "$target" 2>/dev/null || echo "$target")
+    if [[ ! -e "$target" ]]; then
+      printf '\033[1;31m[filelock]\033[0m File not found: %s\n' "$target"
+      return 1
+    fi
+    local lines
+    lines=$(lsof "$target" 2>/dev/null | tail -n +2)
+    if [[ -z "$lines" ]]; then
+      printf '\033[1;33m[filelock]\033[0m No processes found holding %s\n' "$target"
+      return 0
+    fi
+    local header
+    header=$(printf '%-8s %-20s %-6s %-6s %-10s %s' \
+      "PID" "COMMAND" "USER" "FD" "TYPE" "LOCK")
+    local formatted
+    formatted=$(echo "$lines" | awk '{printf "%-8s %-20s %-6s %-6s %-10s %s\n", $2, $1, $3, $4, $5, $8}')
+    local selected
+    selected=$(echo "$formatted" | fzf \
+      --header="$header"$'\n'"$(basename "$target") — Enter=kill, Esc=cancel" \
+      --multi \
+      --ansi \
+      --reverse \
+      --no-sort)
+    [[ -z "$selected" ]] && return 0
+    local sel_pids
+    sel_pids=$(echo "$selected" | awk '{print $1}' | sort -u)
+    echo "$sel_pids" | while read -r pid; do
+      local pname
+      pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+      printf '\033[1;34m[filelock]\033[0m Kill PID %s (%s)? [y/N] ' "$pid" "$pname"
+      read -rsk1 ans
+      printf '\n'
+      if [[ "$ans" =~ ^[Yy]$ ]]; then
+        kill -9 "$pid" 2>/dev/null && \
+          printf '\033[1;32m[filelock]\033[0m Killed %s\n' "$pid" || \
+          printf '\033[1;31m[filelock]\033[0m Failed to kill %s (try sudo)\n' "$pid"
+      fi
+    done
+    return 0
+  fi
+
+  printf '\033[1;31m[filelock]\033[0m Usage: filelock <file> | filelock kill <file>\n'
+  return 1
+}
+
+function k9() { kill -9 $1 }

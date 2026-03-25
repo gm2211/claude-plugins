@@ -78,6 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ruby ruby-dev \
         build-essential \
         unzip \
+        socat \
         uuid-runtime \
         postgresql-client \
         python3-venv \
@@ -155,6 +156,42 @@ RUN set -eux; \
     ln -sf /opt/nvim-linux-${NVIM_ARCH}/bin/nvim /usr/local/bin/nvim
 
 # ---------------------------------------------------------------------------
+# Rust / Cargo (installed to /home/agent; chown happens later)
+# ---------------------------------------------------------------------------
+ENV RUSTUP_HOME=/home/agent/.rustup
+ENV CARGO_HOME=/home/agent/.cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+# ---------------------------------------------------------------------------
+# doctl (DigitalOcean CLI)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    DOCTL_VERSION=$(curl -fsSL https://api.github.com/repos/digitalocean/doctl/releases/latest | jq -r '.tag_name' | sed 's/^v//'); \
+    curl -fsSL "https://github.com/digitalocean/doctl/releases/download/v${DOCTL_VERSION}/doctl-${DOCTL_VERSION}-linux-${TARGETARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin; \
+    chmod +x /usr/local/bin/doctl
+
+# ---------------------------------------------------------------------------
+# kubectl
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    KUBE_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt); \
+    curl -fsSL "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+        -o /usr/local/bin/kubectl; \
+    chmod +x /usr/local/bin/kubectl
+
+# ---------------------------------------------------------------------------
+# Terraform
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    curl -fsSL https://apt.releases.hashicorp.com/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" \
+        | tee /etc/apt/sources.list.d/hashicorp.list; \
+    apt-get update && apt-get install -y --no-install-recommends terraform \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
 # Kitty terminfo (for TERM=xterm-kitty from host)
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminfo/kitty.terminfo \
@@ -197,7 +234,7 @@ RUN mkdir -p /home/agent/.config/zellij/plugins \
     && curl -fsSL "https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm" \
          -o /home/agent/.config/zellij/plugins/zjframes.wasm \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm|file:/home/agent/.config/zellij/plugins/zjstatus.wasm|g' \
-         /home/agent/.config/zellij/layouts/default.kdl \
+         /home/agent/.config/zellij/layouts/modern.kdl \
     && sed -i 's|https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm|file:/home/agent/.config/zellij/plugins/zjframes.wasm|g' \
          /home/agent/.config/zellij/config.kdl \
     && sed -i '/^copy_command/d' /home/agent/.config/zellij/config.kdl \
@@ -265,6 +302,14 @@ SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
 # ---------------------------------------------------------------------------
+# Source env vars staged by clauded() on the host (DOLT_HOST_PORT, tokens, etc.)
+# ---------------------------------------------------------------------------
+STAGING_ENV=$(find /Users /home -maxdepth 6 -name "clauded-env" -type f 2>/dev/null | head -1)
+if [ -f "$STAGING_ENV" ]; then
+  . "$STAGING_ENV"
+fi
+
+# ---------------------------------------------------------------------------
 # Install host-mounted config files from .claude-sandbox-mount/
 # (staged by clauded() on the host before sandbox launch)
 # ---------------------------------------------------------------------------
@@ -282,40 +327,71 @@ if [ -n "$MOUNT_DIR" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Clean up host-side dolt server state so bd auto-starts inside the container.
-# The workspace .beads/ dir is mounted from the host and may contain stale
-# PID/port files pointing at the host's dolt server (unreachable from here).
+# Ensure CLAUDE.md includes bd tool documentation
 # ---------------------------------------------------------------------------
-for BEADS_DIR in $(find /Users /home -maxdepth 4 -name ".beads" -type d 2>/dev/null); do
-  rm -f "$BEADS_DIR/dolt-server.pid" "$BEADS_DIR/dolt-server.port" "$BEADS_DIR/dolt-server.lock" 2>/dev/null
-done
-
-# sp (specify) — symlink if the workspace is mounted
-SP_RUN=$(find /Users /home -maxdepth 5 -path "*/specify/run.sh" -type f 2>/dev/null | head -1)
-if [ -n "$SP_RUN" ]; then
-  ln -sf "$SP_RUN" /usr/local/bin/sp
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+if [ -f "$CLAUDE_MD" ] && ! grep -q '`bd`' "$CLAUDE_MD" 2>/dev/null; then
+  cat >> "$CLAUDE_MD" <<'EOBD'
+- `bd` — CLI for Beads issue tracker (backed by Dolt database). Tracks issues/tasks in `.beads/` directories. Run `bd` with no args for usage. Common commands: `bd list`, `bd show <id>`, `bd create`, `bd update`, `bd dolt start` (start the Dolt SQL server if not running).
+EOBD
 fi
 
 # ---------------------------------------------------------------------------
-# Merge plugin + statusLine settings into settings.json
+# Forward host ports into the container via socat.
+# clauded() passes SANDBOX_FORWARD_PORTS as a comma-separated list.
+# Each port gets a socat forwarder: 127.0.0.1:PORT → host.docker.internal:PORT
 # ---------------------------------------------------------------------------
-MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"statusLine":{"type":"command","command":"~/.config/claude-status-line/statusline.sh"},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}},"codex":{"command":"codex","args":["-m","gpt-5.4","-c","model_reasoning_effort=high","mcp-server"]}}}'
+if [ -n "$SANDBOX_FORWARD_PORTS" ]; then
+  echo "$SANDBOX_FORWARD_PORTS" | tr ',' '\n' | while read -r FWD_PORT; do
+    [ -z "$FWD_PORT" ] && continue
+    socat TCP-LISTEN:"$FWD_PORT",bind=127.0.0.1,fork,reuseaddr \
+          TCP:host.docker.internal:"$FWD_PORT" &
+  done
+fi
+
+# Clean stale dolt state from host-mounted .beads/ dirs and write forwarded port
+for BEADS_DIR in $(find /Users /home -maxdepth 4 -name ".beads" -type d 2>/dev/null); do
+  rm -f "$BEADS_DIR/dolt-server.pid" "$BEADS_DIR/dolt-server.lock" 2>/dev/null
+  if [ -n "$SANDBOX_FORWARD_PORTS" ]; then
+    # If dolt port (3307) is among forwarded ports, update the port file
+    echo "$SANDBOX_FORWARD_PORTS" | tr ',' '\n' | grep -qx 3307 && \
+      echo "3307" > "$BEADS_DIR/dolt-server.port"
+  fi
+done
+
+# sp (specify) — find mounted host repo or clone, then create /usr/local/bin/sp
+# Always use a node wrapper (not symlink to specify wrapper) because the host
+# repo is mounted read-only and the wrapper's auto-build would fail.
+SP_DIR=$(find /Users /home -maxdepth 4 -path "*/projects/specify" -type d -exec test -f "{}/package.json" \; -print 2>/dev/null | head -1)
+if [ -z "$SP_DIR" ]; then
+  SP_DIR="$HOME/projects/specify"
+  git clone https://github.com/gm2211/specify.git "$SP_DIR" 2>/dev/null
+  # Build after clone (writable since we own it)
+  if [ -f "$SP_DIR/tsconfig.json" ]; then
+    (cd "$SP_DIR" && npm install --ignore-scripts 2>/dev/null && ./node_modules/.bin/tsc 2>/dev/null) || true
+  fi
+fi
+if [ -d "$SP_DIR" ] && [ -f "$SP_DIR/dist/src/cli/index.js" ]; then
+  cat > /usr/local/bin/sp <<EOSP
+#!/bin/sh
+exec node "$SP_DIR/dist/src/cli/index.js" "\$@"
+EOSP
+  chmod +x /usr/local/bin/sp
+fi
+
+# ---------------------------------------------------------------------------
+# Merge plugin settings into settings.json
+# The Docker sandbox copies ~/.claude from the host (including settings.json
+# and statusline.sh), so statusLine config comes from the host.
+# This merge ensures enabledPlugins and mcpServers are present as a fallback.
+# ---------------------------------------------------------------------------
+MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}}}}'
 
 if [ ! -f "$SETTINGS" ]; then
   printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
 elif command -v jq >/dev/null 2>&1; then
-  # Merge: existing settings take precedence for statusLine if already set,
-  # but always ensure enabledPlugins and statusLine are present
-  jq --argjson merge "$MERGE_OBJ" '$merge * .' "$SETTINGS" > "${SETTINGS}.tmp" \
+  jq --argjson merge "$MERGE_OBJ" '. * $merge' "$SETTINGS" > "${SETTINGS}.tmp" \
     && mv "${SETTINGS}.tmp" "$SETTINGS"
-else
-  # Fallback without jq: inject keys if missing
-  if ! grep -q '"enabledPlugins"' "$SETTINGS" 2>/dev/null; then
-    sed -i 's/}$/,"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}/' "$SETTINGS"
-  fi
-  if ! grep -q '"statusLine"' "$SETTINGS" 2>/dev/null; then
-    sed -i 's/}$/,"statusLine":{"type":"command","command":"~\/.config\/claude-status-line\/statusline.sh"}}/' "$SETTINGS"
-  fi
 fi
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh
@@ -350,6 +426,7 @@ ENV LC_ALL=en_US.UTF-8
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
 ENV SHELL=/bin/zsh
+ENV PATH="/home/agent/.cargo/bin:${PATH}"
 
 USER agent
 
