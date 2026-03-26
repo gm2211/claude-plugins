@@ -365,28 +365,22 @@ EOSP
 fi
 
 # ---------------------------------------------------------------------------
-# Ensure statusline script is reachable from whatever path settings.json uses.
-# The host settings.json may reference ~/.claude/statusline.sh while the
-# baked-in copy lives at ~/.config/claude-status-line/statusline.sh.
+# Fix statusline path: host uses ~/.claude/statusline.sh but sandbox has it
+# at ~/.config/claude-status-line/statusline.sh.
+# ~/.claude is mounted writable so we can modify settings.json in place.
 # ---------------------------------------------------------------------------
-if [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
-  _sl_cmd=$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null)
-  if [ -n "$_sl_cmd" ]; then
-    # Expand ~ to $HOME
-    _sl_path="${_sl_cmd/#\~/$HOME}"
-    if [ ! -f "$_sl_path" ] && [ -f "$HOME/.config/claude-status-line/statusline.sh" ]; then
-      mkdir -p "$(dirname "$_sl_path")"
-      ln -sf "$HOME/.config/claude-status-line/statusline.sh" "$_sl_path"
-    fi
-  fi
+SANDBOX_SL="$HOME/.config/claude-status-line/statusline.sh"
+if [ -f "$SANDBOX_SL" ] && [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
+  jq --arg cmd "$SANDBOX_SL" '.statusLine = {"type":"command","command":$cmd}' \
+    "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
 fi
 
-# ---------------------------------------------------------------------------
-# Merge plugin settings into settings.json
-# The Docker sandbox copies ~/.claude from the host (including settings.json
-# and statusline.sh), so statusLine config comes from the host.
-# This merge ensures enabledPlugins and mcpServers are present as a fallback.
-# ---------------------------------------------------------------------------
+# Symlink statusline.sh to host path as fallback
+if [ -f "$SANDBOX_SL" ]; then
+  ln -sf "$SANDBOX_SL" "$HOME/.claude/statusline.sh" 2>/dev/null || true
+fi
+
+# Merge plugin settings (enabledPlugins, mcpServers)
 MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}}}}'
 
 if [ ! -f "$SETTINGS" ]; then

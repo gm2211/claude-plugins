@@ -1349,7 +1349,7 @@ clauded() {
       _workspaces+=("$1")
     }
 
-    [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude:ro"
+    [ -d "$HOME/.claude" ] && _clauded_add_mount "$HOME/.claude"
     [ -d "$HOME/.codex" ] && _clauded_add_mount "$HOME/.codex:ro"
     [ -d "$HOME/.config/gh" ] && _clauded_add_mount "$HOME/.config/gh:ro"
     [ -d "$HOME/projects/specify" ] && _clauded_add_mount "$HOME/projects/specify:ro"
