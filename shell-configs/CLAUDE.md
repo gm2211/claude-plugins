@@ -194,4 +194,4 @@ kitty @ load-config
 Requires a zellij session restart -- config reload alone won't pick up changes.
 
 **Codex CLI scroll limited in Zellij:**
-Codex's TUI redraws in place, so Zellij scrollback only captures the visible pane height even with `--no-alt-screen` / `alternate_screen = "never"`. As of Codex 0.101+, the default `alternate_screen = "auto"` already disables alt-screen inside Zellij, so no wrapper or flag is needed. Use **`Ctrl+T`** inside Codex to open its built-in conversation history viewer — this is the supported workaround. See [openai/codex#2558](https://github.com/openai/codex/issues/2558).
+Codex's TUI redraws in place, so Zellij scrollback only captures the visible pane height even with `--no-alt-screen` / `alternate_screen = "never"`. This config wraps `codex` to add `--no-alt-screen` automatically for interactive sessions, but that only addresses alt-screen behavior, not Codex's in-place redraw model. Use **`Ctrl+T`** inside Codex to open its built-in conversation history viewer when scrollback is incomplete. See [openai/codex#2558](https://github.com/openai/codex/issues/2558).

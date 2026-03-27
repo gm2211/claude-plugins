@@ -866,6 +866,29 @@ _claude_launch() {
   command claude "$@"
 }
 
+# codex() — launch Codex with safer defaults for Zellij/terminal redraw issues.
+# In interactive sessions, prefer the main screen buffer unless the caller
+# explicitly requested otherwise.
+codex() {
+  local _codex_args=()
+  local _has_alt_flag=0
+  local _arg
+  for _arg in "$@"; do
+    case "$_arg" in
+      --no-alt-screen|--alt-screen)
+        _has_alt_flag=1
+        ;;
+    esac
+    _codex_args+=("$_arg")
+  done
+
+  if [[ -t 0 && -t 1 && $_has_alt_flag -eq 0 ]]; then
+    command codex --no-alt-screen "${_codex_args[@]}"
+  else
+    command codex "${_codex_args[@]}"
+  fi
+}
+
 # claude() — Worktree-first shell function for Claude Code.
 #
 # Prevents Claude Code sessions from accidentally working on the default branch
