@@ -254,13 +254,16 @@ plugins {
         cwd "/"
     }
     plugin-manager location="zellij:plugin-manager"
-    session-manager location="zellij:session-manager"
+    session-manager location="zellij:session-manager" {
+        multi_screen true
+    }
     status-bar location="zellij:status-bar"
     strider location="zellij:strider"
     tab-bar location="zellij:tab-bar"
-    welcome-screen location="zellij:session-manager" {
-        welcome_screen true
-    }
+    // welcome-screen disabled — was showing stripped-down session manager
+    // welcome-screen location="zellij:session-manager" {
+    //     welcome_screen true
+    // }
 }
 
 load_plugins {
@@ -275,6 +278,8 @@ web_client {
 
 default_layout "modern"
 
+default_cwd "~"
+
 default_shell "/bin/zsh"
 
 copy_command "pbcopy"
@@ -284,3 +289,5 @@ copy_on_select true
 mouse_mode true
 
 support_kitty_keyboard_protocol true
+
+show_startup_tips false

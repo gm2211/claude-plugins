@@ -1,11 +1,25 @@
 layout {
     default_tab_template {
-        children
+        pane split_direction="vertical" {
+            pane size=20 borderless=true {
+                plugin location="file:~/.config/zellij/plugins/zellij-vertical-tabs.wasm" {
+                    format       "#[fg=#6c7086] {index} {name}"
+                    format_active "#[fg=#cdd6f4,bg=#313244,bold,fill] {index} {name}"
+                    max_name_length "16"
+                    border       "#[fg=#45475a]|"
+                    start_index  "1"
+                    padding_top  "0"
+                }
+            }
+            pane {
+                children
+            }
+        }
         pane size=1 borderless=true {
             plugin location="https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm" {
-                format_left  "{mode}#[fg=#7f849c,bg=#1e1e2e,bold]{session}"
-                format_center "{tabs}"
-                format_right "{command_git_branch} {pipe_status} {datetime}"
+                format_left  "{mode}#[fg=#7f849c,bg=#1e1e2e,bold] {session}"
+                format_center ""
+                format_right "{datetime}"
                 format_space "#[bg=#1e1e2e]"
                 format_hide_on_overlength "true"
                 format_precedence "clr"
@@ -15,37 +29,24 @@ layout {
                 background "#1e1e2e"
                 color_bg "#1e1e2e"
 
-                // Minimal mode indicators — small colored block, no text labels
-                mode_normal  "#[bg=#89b4fa] #[bg=#1e1e2e] "
-                mode_tmux    "#[bg=#fab387] #[bg=#1e1e2e] "
-                mode_pane    "#[bg=#a6e3a1] #[bg=#1e1e2e] "
-                mode_tab     "#[bg=#cba6f7] #[bg=#1e1e2e] "
-                mode_resize  "#[bg=#f9e2af] #[bg=#1e1e2e] "
-                mode_move    "#[bg=#94e2d5] #[bg=#1e1e2e] "
-                mode_scroll  "#[bg=#f38ba8] #[bg=#1e1e2e] "
-                mode_search  "#[bg=#f5c2e7] #[bg=#1e1e2e] "
-                mode_session "#[bg=#74c7ec] #[bg=#1e1e2e] "
-                mode_locked  "#[bg=#6c7086] #[bg=#1e1e2e] "
+                mode_normal  "#[bg=#89b4fa,fg=#1e1e2e,bold] NORMAL #[bg=#1e1e2e] "
+                mode_tmux    "#[bg=#fab387,fg=#1e1e2e,bold] TMUX #[bg=#1e1e2e] "
+                mode_pane    "#[bg=#a6e3a1,fg=#1e1e2e,bold] PANE #[bg=#1e1e2e] "
+                mode_tab     "#[bg=#cba6f7,fg=#1e1e2e,bold] TAB #[bg=#1e1e2e] "
+                mode_resize  "#[bg=#f9e2af,fg=#1e1e2e,bold] RESIZE #[bg=#1e1e2e] "
+                mode_move    "#[bg=#94e2d5,fg=#1e1e2e,bold] MOVE #[bg=#1e1e2e] "
+                mode_scroll  "#[bg=#f38ba8,fg=#1e1e2e,bold] SCROLL #[bg=#1e1e2e] "
+                mode_search  "#[bg=#f5c2e7,fg=#1e1e2e,bold] SEARCH #[bg=#1e1e2e] "
+                mode_session "#[bg=#74c7ec,fg=#1e1e2e,bold] SESSION #[bg=#1e1e2e] "
+                mode_locked  "#[bg=#6c7086,fg=#1e1e2e,bold] LOCKED #[bg=#1e1e2e] "
 
-                // Tab styling — simple index + name, no arrows or pills
-                tab_normal              "#[fg=#6c7086,bg=#1e1e2e] {index} {name} "
-                tab_active              "#[fg=#cdd6f4,bg=#1e1e2e,bold] {index} {name} "
-                tab_separator           "#[fg=#45475a,bg=#1e1e2e] "
-                tab_display_count       "6"
-                tab_truncate_start_format "#[fg=#6c7086,bg=#1e1e2e] < +{count} "
-                tab_truncate_end_format   "#[fg=#6c7086,bg=#1e1e2e] +{count} >"
+                tab_normal              ""
+                tab_active              ""
+                tab_separator           ""
 
-                // Git branch
-                command_git_branch_command  "git rev-parse --abbrev-ref HEAD"
-                command_git_branch_format   "#[fg=#a6e3a1,bg=#1e1e2e]  {stdout} "
-                command_git_branch_interval "10"
-                command_git_branch_rendermode "static"
-
-                // Pipe status (dynamic updates from hooks)
                 pipe_status_format "#[fg=#6c7086,bg=#1e1e2e]{output}"
                 pipe_status_rendermode "dynamic"
 
-                // Full date and time on the right
                 datetime         "#[fg=#7f849c,bg=#1e1e2e]{format}"
                 datetime_format  "%A, %d %b %Y %H:%M"
                 datetime_timezone "America/New_York"
