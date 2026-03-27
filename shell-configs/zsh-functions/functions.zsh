@@ -2111,3 +2111,17 @@ filelock() {
 }
 
 function k9() { kill -9 $1 }
+
+# sb — strip blanks (all whitespace) from a string
+# Usage: sb "  hello  world  "  →  "helloworld"
+#        echo " foo bar " | sb
+sb() {
+  local result
+  if [ $# -gt 0 ]; then
+    result=$(printf '%s' "${*//$'\n'/}" | tr -d '[:space:]')
+  else
+    result=$(tr -d '[:space:]')
+  fi
+  printf '%s' "$result" | pbcopy
+  printf '%s\n' "$result"
+}
