@@ -1296,6 +1296,8 @@ clauded() {
           [ -d "$_r" ] && _search_roots+=("$_r")
         done
         [ ${#_search_roots[@]} -eq 0 ] && _search_roots=("$HOME")
+        local _cwd_real
+        _cwd_real="$(pwd -P)"
         _selected=$(
           find "${_search_roots[@]}" -maxdepth 3 -type d \
             -not -path '*/\.*' \
@@ -1314,7 +1316,6 @@ clauded() {
                 --reverse \
                 --prompt="Select directories to mount (ro): " \
                 --header="Tab=toggle  Enter=confirm  Esc=skip" \
-                --bind="enter:select+accept" \
                 --preview="ls -lhF --color=always \$(echo {} | sed \"s|^~|$HOME|\")" \
                 --preview-window=right:40% \
             2>/dev/null
@@ -1322,6 +1323,13 @@ clauded() {
         if [ -n "$_selected" ]; then
           while IFS= read -r _dir; do
             _dir="${_dir/#\~/$HOME}"
+            local _dir_real
+            _dir_real="$(cd "$_dir" 2>/dev/null && pwd -P)" || continue
+            if [ "$_dir_real" = "$_cwd_real" ] || [[ "$_cwd_real" == "$_dir_real"/* ]]; then
+              printf '\033[1;33m[clauded]\033[0m  ⚠ %s is a parent of CWD (already mounted as .). Mount anyway? [y/N] ' "$_dir"
+              read -rsk1 _ans; printf '\n'
+              [[ "$_ans" != [yY] ]] && continue
+            fi
             _extra_mounts+=("${_dir}:ro")
             printf '\033[1;34m[clauded]\033[0m  + %s (ro)\n' "$_dir"
           done <<< "$_selected"
@@ -1443,7 +1451,7 @@ clauded() {
     # Get primary workspace from sandbox metadata
     local _ws_path
     _ws_path=$(docker sandbox ls --json 2>/dev/null \
-      | jq -r --arg name "$_sandbox_name" '.vms[] | select(.name==$name) | .workspaces[0] // empty')
+      | jq -r --arg name "$_sandbox_name" '(.vms // [])[] | select(.name==$name) | .workspaces[0] // empty')
 
     local _exec_args=(-it)
     [ -n "$_env_file" ] && _exec_args+=(--env-file "$_env_file")
@@ -1465,7 +1473,7 @@ clauded() {
       _sb_names+=("$_name")
       _sb_statuses+=("$_status")
       _sb_workspaces+=("$_ws")
-    done < <(echo "$_sandbox_json" | jq -r '.vms[] | [.name, .status, (.workspaces[0] // "—")] | @tsv')
+    done < <(echo "$_sandbox_json" | jq -r '(.vms // [])[] | [.name, .status, (.workspaces[0] // "—")] | @tsv')
   fi
 
   local _n_sandboxes=${#_sb_names[@]}
