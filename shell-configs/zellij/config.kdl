@@ -145,6 +145,7 @@ keybinds clear-defaults=true {
         bind "Alt =" { Resize "Increase"; }
         bind "Alt [" { PreviousSwapLayout; }
         bind "Alt ]" { NextSwapLayout; }
+        bind "Super e" { ToggleFocusFullscreen; }
         bind "Alt f" { ToggleFloatingPanes; }
         bind "Super h" { MoveFocus "left"; }
         bind "Super j" { MoveFocus "down"; }

@@ -203,9 +203,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/kovidgoyal/kitty/master/terminf
         | tic -x -o /usr/share/terminfo -
 
 # ---------------------------------------------------------------------------
-# OpenAI Codex CLI
+# OpenAI Codex CLI — installed globally, then ownership given to agent so
+# the sandbox user can update it later via `npm install -g @openai/codex`.
 # ---------------------------------------------------------------------------
-RUN npm install -g @openai/codex
+RUN npm install -g @openai/codex \
+    && chown -R 1000:1000 /usr/local/share/npm-global
 
 # ---------------------------------------------------------------------------
 # Starship prompt
@@ -229,6 +231,12 @@ RUN chsh -s /bin/zsh agent
 # ---------------------------------------------------------------------------
 COPY shell-configs/zellij/  /home/agent/.config/zellij/
 COPY shell-configs/nvim/    /home/agent/.config/nvim/
+
+# Pre-clone lazy.nvim so nvim works offline inside the sandbox
+RUN git clone --filter=blob:none --branch=stable \
+      https://github.com/folke/lazy.nvim.git \
+      /home/agent/.local/share/nvim/lazy/lazy.nvim
+
 COPY shell-configs/zsh-functions/ /home/agent/.config/zsh/
 COPY shell-configs/claude-status-line/ /home/agent/.config/claude-status-line/
 
@@ -260,6 +268,9 @@ EOENTRY
 RUN chmod +x /home/agent/.local/bin/entrypoint.sh
 
 RUN cat > /home/agent/.zshrc <<'EOZSH'
+# Source sandbox env vars (persisted by ensure-plugins.sh)
+[ -f ~/.sandbox-env ] && source ~/.sandbox-env
+
 # Auto-start zellij on interactive attach (skipped inside existing zellij sessions)
 if [[ -z "$ZELLIJ" ]] && [[ $- == *i* ]] && command -v zellij &>/dev/null; then
     exec zellij
@@ -289,6 +300,7 @@ alias gs='git status'
 alias gco='git checkout'
 alias gp='git push'
 alias gpu='git push -u'
+alias claude='command claude --dangerously-skip-permissions'
 
 # Source custom functions
 [ -f ~/.config/zsh/functions.zsh ] && source ~/.config/zsh/functions.zsh
@@ -299,27 +311,67 @@ EOZSH
 # ---------------------------------------------------------------------------
 COPY --from=builder /plugin-cache/ /home/agent/.claude/plugins/
 
-# Ensure enabledPlugins is merged into settings.json at startup
-# (Docker sandbox overwrites settings.json on creation, so we merge at runtime)
+# Ensure sandbox-local Claude settings are applied at startup.
+# Docker sandbox may rewrite settings.json on creation, so we keep our runtime
+# overrides in settings.local.json wherever possible.
 RUN cat > /home/agent/.local/bin/ensure-plugins.sh <<'EOSCRIPT'
 #!/bin/sh
 SETTINGS="$HOME/.claude/settings.json"
+SETTINGS_LOCAL="$HOME/.claude/settings.local.json"
 mkdir -p "$(dirname "$SETTINGS")"
 
-# ---------------------------------------------------------------------------
-# Env vars are passed via --env-file on `docker sandbox exec`.
-# No staging dir needed — ensure-plugins.sh inherits them directly.
-# ---------------------------------------------------------------------------
+# Prefer a mounted host Claude config (e.g. /Users/<user>/.claude) as the auth
+# source of truth. Docker sandbox workspaces are mounted at host paths, not at
+# $HOME/.claude, so copy the host credentials into the sandbox home before Claude
+# starts.
+HOST_CLAUDE_DIR=""
+for CANDIDATE in /Users/*/.claude /home/*/.claude; do
+  [ "$CANDIDATE" = "$HOME/.claude" ] && continue
+  [ -f "$CANDIDATE/.credentials.json" ] || continue
+  HOST_CLAUDE_DIR="$CANDIDATE"
+  break
+done
+
+if [ -n "$HOST_CLAUDE_DIR" ] && [ -f "$HOST_CLAUDE_DIR/.credentials.json" ]; then
+  if ! cmp -s "$HOST_CLAUDE_DIR/.credentials.json" "$HOME/.claude/.credentials.json" 2>/dev/null; then
+    cp "$HOST_CLAUDE_DIR/.credentials.json" "$HOME/.claude/.credentials.json"
+    chmod 600 "$HOME/.claude/.credentials.json"
+    echo "[ensure-plugins] Synced Claude credentials from $HOST_CLAUDE_DIR"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
-# Ensure CLAUDE.md includes bd tool documentation
+# Persist select env vars to ~/.sandbox-env so they survive across zellij
+# panes and reattach. .zshrc sources this file on every shell start.
 # ---------------------------------------------------------------------------
-CLAUDE_MD="$HOME/.claude/CLAUDE.md"
-if [ -f "$CLAUDE_MD" ] && ! grep -q '`bd`' "$CLAUDE_MD" 2>/dev/null; then
-  cat >> "$CLAUDE_MD" <<'EOBD'
-- `bd` — CLI for Beads issue tracker (backed by Dolt database). Tracks issues/tasks in `.beads/` directories. Run `bd` with no args for usage. Common commands: `bd list`, `bd show <id>`, `bd create`, `bd update`, `bd dolt start` (start the Dolt SQL server if not running).
-EOBD
+SANDBOX_ENV="$HOME/.sandbox-env"
+: > "$SANDBOX_ENV"
+for VAR in DIGITALOCEAN_API_TOKEN GH_TOKEN; do
+  eval "VAL=\${$VAR:-}"
+  [ -n "$VAL" ] && printf 'export %s="%s"\n' "$VAR" "$VAL" >> "$SANDBOX_ENV"
+done
+chmod 600 "$SANDBOX_ENV"
+
+# Docker sandbox create injects apiKeyHelper:"echo proxy-managed" into
+# settings.json, which breaks OAuth auth for Pro/Max subscriptions.
+# Strip it so Claude Code falls through to normal OAuth login flow.
+# Auth is sourced from the mounted host Claude config and synced into the
+# sandbox home above, since Claude reads $HOME/.claude inside the container.
+if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1 && jq -e '.apiKeyHelper' "$SETTINGS" >/dev/null 2>&1; then
+  jq 'del(.apiKeyHelper)' "$SETTINGS" > "${SETTINGS}.tmp" \
+    && mv "${SETTINGS}.tmp" "$SETTINGS"
+  echo "[ensure-plugins] Stripped apiKeyHelper from settings.json"
 fi
+
+# ---------------------------------------------------------------------------
+# Update CLI tools (background, non-blocking).
+# Failures are non-fatal so sandbox startup still succeeds offline.
+# ---------------------------------------------------------------------------
+(
+  npm install -g @openai/codex@latest 2>/dev/null && echo "[ensure-plugins] Codex CLI updated" || true
+  command -v claude >/dev/null 2>&1 && claude update >/dev/null 2>&1 \
+    && echo "[ensure-plugins] Claude CLI updated" || true
+) &
 
 # ---------------------------------------------------------------------------
 # Forward host ports into the container via socat.
@@ -365,29 +417,42 @@ EOSP
 fi
 
 # ---------------------------------------------------------------------------
-# Fix statusline path: host uses ~/.claude/statusline.sh but sandbox has it
-# at ~/.config/claude-status-line/statusline.sh.
-# ~/.claude is mounted writable so we can modify settings.json in place.
+# Point Claude's status line at the sandbox-local script path.
+# Write to settings.local.json so we avoid mutating host settings.json.
 # ---------------------------------------------------------------------------
 SANDBOX_SL="$HOME/.config/claude-status-line/statusline.sh"
-if [ -f "$SANDBOX_SL" ] && [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
-  jq --arg cmd "$SANDBOX_SL" '.statusLine = {"type":"command","command":$cmd}' \
-    "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-fi
-
-# Symlink statusline.sh to host path as fallback
-if [ -f "$SANDBOX_SL" ]; then
-  ln -sf "$SANDBOX_SL" "$HOME/.claude/statusline.sh" 2>/dev/null || true
+if [ -f "$SANDBOX_SL" ] && command -v jq >/dev/null 2>&1; then
+  LOCAL_OBJ='{}'
+  [ -f "$SETTINGS_LOCAL" ] && LOCAL_OBJ=$(cat "$SETTINGS_LOCAL")
+  echo "$LOCAL_OBJ" | jq --arg cmd "$SANDBOX_SL" '.statusLine = {"type":"command","command":$cmd}' \
+    > "${SETTINGS_LOCAL}.tmp" && mv "${SETTINGS_LOCAL}.tmp" "$SETTINGS_LOCAL"
 fi
 
 # Merge plugin settings (enabledPlugins, mcpServers)
-MERGE_OBJ='{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true},"mcpServers":{"digitalocean":{"command":"npx","args":["-y","@digitalocean/mcp"],"env":{"DIGITALOCEAN_API_TOKEN":"${DIGITALOCEAN_API_TOKEN}"}}}}'
+DO_TOKEN="${DIGITALOCEAN_API_TOKEN:-}"
 
-if [ ! -f "$SETTINGS" ]; then
-  printf '%s\n' "$MERGE_OBJ" > "$SETTINGS"
-elif command -v jq >/dev/null 2>&1; then
-  jq --argjson merge "$MERGE_OBJ" '. * $merge' "$SETTINGS" > "${SETTINGS}.tmp" \
-    && mv "${SETTINGS}.tmp" "$SETTINGS"
+# Write plugin/mcp config to settings.local.json (sandbox overlay, not host settings)
+LOCAL_OBJ='{}'
+[ -f "$SETTINGS_LOCAL" ] && LOCAL_OBJ=$(cat "$SETTINGS_LOCAL")
+if command -v jq >/dev/null 2>&1; then
+  MERGE_OBJ=$(jq -n --arg do_token "$DO_TOKEN" '
+    {
+      enabledPlugins: {
+        "claude-multiagent@gm2211-plugins": true
+      },
+      mcpServers: {
+        digitalocean: {
+          command: "npx",
+          args: ["-y", "@digitalocean/mcp"],
+          env: (if $do_token == "" then {} else {DIGITALOCEAN_API_TOKEN: $do_token} end)
+        }
+      }
+    }
+  ')
+  echo "$LOCAL_OBJ" | jq --argjson merge "$MERGE_OBJ" '. * $merge' \
+    > "${SETTINGS_LOCAL}.tmp" && mv "${SETTINGS_LOCAL}.tmp" "$SETTINGS_LOCAL"
+else
+  printf '%s\n' '{"enabledPlugins":{"claude-multiagent@gm2211-plugins":true}}' > "$SETTINGS_LOCAL"
 fi
 EOSCRIPT
 RUN chmod +x /home/agent/.local/bin/ensure-plugins.sh

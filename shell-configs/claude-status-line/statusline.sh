@@ -13,15 +13,17 @@ DIR=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
 ADDED=$(echo "$input" | jq -r '.cost.total_lines_added // 0')
 REMOVED=$(echo "$input" | jq -r '.cost.total_lines_removed // 0')
 
-# Sandbox mode — read from input JSON first, fall back to settings.json
+# Sandbox mode — read from input JSON first, then Claude user/local settings
 SANDBOX_ENABLED=$(echo "$input" | jq -r '.sandbox.enabled // empty' 2>/dev/null)
 SANDBOX_MODE=$(echo "$input" | jq -r '.sandbox.mode // empty' 2>/dev/null)
 if [ -z "$SANDBOX_ENABLED" ]; then
-    SETTINGS="$HOME/.claude/settings.json"
-    if [ -f "$SETTINGS" ]; then
-        SANDBOX_ENABLED=$(jq -r '.sandbox.enabled // empty' "$SETTINGS" 2>/dev/null)
-        SANDBOX_MODE=$(jq -r '.sandbox.mode // empty' "$SETTINGS" 2>/dev/null)
-    fi
+    for SETTINGS in "$HOME/.claude/settings.local.json" "$HOME/.claude/settings.json"; do
+        if [ -f "$SETTINGS" ]; then
+            SANDBOX_ENABLED=$(jq -r '.sandbox.enabled // empty' "$SETTINGS" 2>/dev/null)
+            SANDBOX_MODE=$(jq -r '.sandbox.mode // empty' "$SETTINGS" 2>/dev/null)
+        fi
+        [ -n "$SANDBOX_ENABLED" ] && break
+    done
 fi
 
 # Current time

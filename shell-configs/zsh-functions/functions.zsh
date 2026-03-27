@@ -1003,16 +1003,35 @@ clauded() {
   local _forward_ports=()
 
   # Parse flags
+  local _env_file_flag=""
   while [[ "$1" == --* || "$1" == -* ]]; do
     case "$1" in
-      --rebuild)  _rebuild=true; shift ;;
-      --no-cache) _no_cache=true; _rebuild=true; shift ;;
-      --mount|-m) _mount=true; shift ;;
-      -e)         shift; _env_vars+=("$1"); shift ;;
-      -p)         shift; _forward_ports+=("$1"); shift ;;
+      --rebuild)       _rebuild=true; shift ;;
+      --no-cache)      _no_cache=true; _rebuild=true; shift ;;
+      --mount|-m)      _mount=true; shift ;;
+      -e)              shift; _env_vars+=("$1"); shift ;;
+      -p)              shift; _forward_ports+=("$1"); shift ;;
+      --env-from-file) shift; _env_file_flag="$1"; shift ;;
       *) break ;;
     esac
   done
+
+  # Load env var names from file (explicit flag or default path).
+  # File contains one env var NAME per line; values are resolved from the host.
+  local _env_names_file="${_env_file_flag:-$HOME/.claude/sandbox.env}"
+  if [ -f "$_env_names_file" ]; then
+    while IFS= read -r _name || [ -n "$_name" ]; do
+      _name="${_name%%#*}"          # strip inline comments
+      _name="${_name// /}"          # strip whitespace
+      [ -z "$_name" ] && continue
+      eval "_val=\${$_name:-}"
+      if [ -n "$_val" ]; then
+        _env_vars+=("${_name}=${_val}")
+      fi
+    done < "$_env_names_file"
+  elif [ -n "$_env_file_flag" ]; then
+    printf '\033[1;33m[clauded]\033[0m Env file not found: %s\n' "$_env_file_flag"
+  fi
 
   # Compute content hash of Dockerfile + all COPY'd source directories
   _clauded_content_hash() {
@@ -1190,77 +1209,12 @@ clauded() {
     _env_vars+=("SANDBOX_FORWARD_PORTS=${(j:,:)_unique_ports}")
   fi
 
-  # Auto-inject OAuth token — always refresh .credentials.json for the sandbox.
-  local _has_oauth=false
-  for _ev in "${_env_vars[@]}"; do
-    [[ "$_ev" == CLAUDE_CODE_OAUTH_TOKEN=* ]] && _has_oauth=true
-  done
-  if ! $_has_oauth; then
-    local _token_file="$HOME/.claude/.sandbox-token"
-    local _token=""
-    if [ -f "$_token_file" ]; then
-      _token=$(<"$_token_file")
-    fi
-    if [ -z "$_token" ]; then
-      printf '\033[1;33m[clauded]\033[0m No sandbox token found.\n'
-      printf '\033[1;34m[clauded]\033[0m Run \033[1mclaude setup-token\033[0m now? (opens browser, token valid for 1 year) [Y/n] '
-      read -rsk1 _ans
-      printf '\n'
-      if [[ "$_ans" != [nN] ]]; then
-        printf '\033[1;34m[clauded]\033[0m Starting token setup — follow the browser prompt...\n'
-        local _setup_log
-        _setup_log="$(mktemp -t clauded-setup.XXXXXX)"
-        claude setup-token 2>&1 | tee "$_setup_log"
-        _token=$(grep -oE 'sk-ant-[A-Za-z0-9_-]+' "$_setup_log" | head -1)
-        rm -f "$_setup_log"
-        if [ -z "$_token" ]; then
-          printf '\033[1;33m[clauded]\033[0m Could not auto-capture the token.\n'
-          printf '\033[1;34m[clauded]\033[0m Paste your token (sk-ant-...): '
-          read -r _token
-        fi
-        if [ -n "$_token" ]; then
-          printf '%s' "$_token" > "$_token_file"
-          chmod 600 "$_token_file"
-          printf '\033[1;32m[clauded]\033[0m Token saved to %s\n' "$_token_file"
-        fi
-      fi
-    fi
-    if [ -n "$_token" ]; then
-      _env_vars+=("CLAUDE_CODE_OAUTH_TOKEN=$_token")
-      # Always refresh .credentials.json so the sandbox gets a valid token
-      local _creds_file="$HOME/.claude/.credentials.json"
-      local _expires_at=$(( $(date +%s) * 1000 + 31536000000 ))  # +1 year in ms
-      printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"","expiresAt":%s,"scopes":["user:inference","user:profile"]}}\n' \
-        "$_token" "$_expires_at" > "$_creds_file"
-      chmod 600 "$_creds_file"
-      printf '\033[1;32m[clauded]\033[0m Sandbox auth token refreshed.\n'
-    else
-      printf '\033[1;33m[clauded]\033[0m No token — you may need to authenticate inside the sandbox.\n'
-    fi
-  fi
-
   # Save current hash after build (or if no build was needed)
   mkdir -p "$(dirname "$_hash_file")"
   printf '%s\n' "$_current_hash" > "$_hash_file"
 
   unfunction _clauded_content_hash 2>/dev/null
 
-  # ---------------------------------------------------------------------------
-  # Extract Claude credentials from macOS Keychain into ~/.claude/.credentials.json
-  # so the sandbox can pick them up via the mounted ~/.claude dir.
-  # ---------------------------------------------------------------------------
-  local _creds_file="$HOME/.claude/.credentials.json"
-  local _creds_tmp
-  _creds_tmp=$(security find-generic-password \
-       -s "Claude Code-credentials" \
-       -a "$(whoami)" \
-       -w 2>/dev/null)
-  if [ -n "$_creds_tmp" ]; then
-    printf '%s\n' "$_creds_tmp" > "$_creds_file"
-    chmod 600 "$_creds_file"
-  elif [ ! -f "$_creds_file" ]; then
-    printf '\033[1;33m[clauded]\033[0m Warning: no Claude credentials found in Keychain or %s\n' "$_creds_file"
-  fi
 
   # Write env vars to a temp file for --env-file; cleaned up on exit
   local _env_file=""
@@ -1457,8 +1411,28 @@ clauded() {
     [ -n "$_env_file" ] && _exec_args+=(--env-file "$_env_file")
     [ -n "$_ws_path" ] && _exec_args+=(-w "$_ws_path")
 
+    # Start host-side notification bridge (translates container signals to
+    # host zellij tab icons). Runs in background, cleaned up on exit.
+    local _bridge_pid=""
+    if [ -n "${ZELLIJ:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+      local _bridge="$_repo/shell-configs/clauded-notify-bridge.sh"
+      if [ -x "$_bridge" ]; then
+        # Clear any stale signal from a previous session
+        rm -f "$HOME/.claude/notify/signal" 2>/dev/null
+        "$_bridge" "$ZELLIJ_PANE_ID" &
+        _bridge_pid=$!
+        printf '\033[90m[clauded] Notification bridge started (pid %s)\033[0m\n' "$_bridge_pid"
+      fi
+    fi
+
     printf '\033[90m[clauded] docker sandbox exec %s %s /bin/zsh\033[0m\n' "${_exec_args[*]}" "$_sandbox_name"
     docker sandbox exec "${_exec_args[@]}" "$_sandbox_name" /bin/zsh
+
+    # Clean up bridge when sandbox session ends
+    if [ -n "$_bridge_pid" ] && kill -0 "$_bridge_pid" 2>/dev/null; then
+      kill "$_bridge_pid" 2>/dev/null
+      wait "$_bridge_pid" 2>/dev/null
+    fi
   }
 
   # -------------------------------------------------------------------------
@@ -1639,6 +1613,598 @@ clauded() {
 
 # cll() — shorthand for clauded (interactive sandbox picker)
 cll() { clauded "$@"; }
+
+# codexd() — launches Codex CLI inside a Docker sandbox (gm-claude-dev image).
+# Streamlined version of clauded(): same image, same sandbox infrastructure,
+# but injects OPENAI_API_KEY instead of Claude OAuth, mounts ~/.codex rw,
+# and skips specify/notification-bridge logic.
+#
+# Flags: --rebuild, --no-cache, --mount/-m, -e <VAR=VAL>, -p <port>, --env-from-file <file>
+codexd() {
+  local _image="gm-claude-dev"
+  local _repo="$HOME/projects/claude-plugins"
+  local _dockerfile="docker/Dockerfile"
+  local _rebuild=false
+  local _no_cache=false
+  local _mount=false
+  local _extra_mounts=()
+  local _env_vars=()
+  local _forward_ports=()
+
+  # Parse flags
+  local _env_file_flag=""
+  while [[ "$1" == --* || "$1" == -* ]]; do
+    case "$1" in
+      --rebuild)       _rebuild=true; shift ;;
+      --no-cache)      _no_cache=true; _rebuild=true; shift ;;
+      --mount|-m)      _mount=true; shift ;;
+      -e)              shift; _env_vars+=("$1"); shift ;;
+      -p)              shift; _forward_ports+=("$1"); shift ;;
+      --env-from-file) shift; _env_file_flag="$1"; shift ;;
+      *) break ;;
+    esac
+  done
+
+  # Load env var names from file (explicit flag or default path).
+  # File contains one env var NAME per line; values are resolved from the host.
+  local _env_names_file="${_env_file_flag:-$HOME/.claude/sandbox.env}"
+  if [ -f "$_env_names_file" ]; then
+    while IFS= read -r _name || [ -n "$_name" ]; do
+      _name="${_name%%#*}"          # strip inline comments
+      _name="${_name// /}"          # strip whitespace
+      [ -z "$_name" ] && continue
+      eval "_val=\${$_name:-}"
+      if [ -n "$_val" ]; then
+        _env_vars+=("${_name}=${_val}")
+      fi
+    done < "$_env_names_file"
+  elif [ -n "$_env_file_flag" ]; then
+    printf '\033[1;33m[codexd]\033[0m Env file not found: %s\n' "$_env_file_flag"
+  fi
+
+  # Compute content hash of Dockerfile + all COPY'd source directories
+  _codexd_content_hash() {
+    (
+      cd "$_repo" || return 1
+      cat "$_dockerfile"
+      find shell-configs/zellij shell-configs/nvim \
+           shell-configs/zsh-functions shell-configs/claude-status-line \
+           -type f 2>/dev/null | sort | xargs cat 2>/dev/null
+    ) | shasum -a 256 | cut -d' ' -f1
+  }
+
+  local _hash_file="$HOME/.cache/codexd/image-hash"
+  local _current_hash
+  _current_hash=$(_codexd_content_hash)
+
+  # Build image if needed (track whether we rebuilt so we can remove stale sandboxes)
+  local _did_rebuild=false
+  local _build_flags=()
+  $_no_cache && _build_flags+=(--no-cache)
+
+  if $_rebuild; then
+    printf '\033[1;34m[codexd]\033[0m Rebuilding %s...\n' "$_image"
+    docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+    _did_rebuild=true
+  elif ! docker image inspect "$_image" &>/dev/null; then
+    printf '\033[1;34m[codexd]\033[0m Image %s not found, building...\n' "$_image"
+    docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+    _did_rebuild=true
+  elif [ ! -f "$_hash_file" ] || [ "$_current_hash" != "$(cat "$_hash_file")" ]; then
+    printf '\033[1;33m[codexd]\033[0m Dockerfile or configs changed since last build. Rebuild? [Y/n] '
+    read -rsk1 _ans
+    printf '\n'
+    if [[ "$_ans" != [nN] ]]; then
+      printf '\033[1;34m[codexd]\033[0m Rebuilding %s...\n' "$_image"
+      docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
+      _did_rebuild=true
+    fi
+  fi
+
+  # Auto-inject DigitalOcean API token if not already provided.
+  local _has_do=false
+  for _ev in "${_env_vars[@]}"; do
+    [[ "$_ev" == DIGITALOCEAN_API_TOKEN=* ]] && _has_do=true
+  done
+  if ! $_has_do; then
+    local _do_token=""
+    # Try doctl config first
+    if command -v doctl &>/dev/null; then
+      _do_token=$(doctl auth list --format Token --no-header 2>/dev/null | head -1)
+    fi
+    # Fallback: extract from doctl config.yaml
+    if [ -z "$_do_token" ]; then
+      local _doctl_config="$HOME/Library/Application Support/doctl/config.yaml"
+      [ -f "$_doctl_config" ] && _do_token=$(grep '^access-token:' "$_doctl_config" | awk '{print $2}')
+    fi
+    if [ -n "$_do_token" ]; then
+      _env_vars+=("DIGITALOCEAN_API_TOKEN=$_do_token")
+      printf '\033[1;32m[codexd]\033[0m DigitalOcean token loaded from doctl.\n'
+    fi
+  fi
+
+  # Inject OPENAI_API_KEY from the host environment.
+  local _has_openai=false
+  for _ev in "${_env_vars[@]}"; do
+    [[ "$_ev" == OPENAI_API_KEY=* ]] && _has_openai=true
+  done
+  if ! $_has_openai; then
+    if [ -n "${OPENAI_API_KEY:-}" ]; then
+      _env_vars+=("OPENAI_API_KEY=$OPENAI_API_KEY")
+      printf '\033[1;32m[codexd]\033[0m OPENAI_API_KEY loaded from host environment.\n'
+    else
+      printf '\033[1;33m[codexd]\033[0m OPENAI_API_KEY is not set — you may need to authenticate inside the sandbox.\n'
+    fi
+  fi
+
+  # Ensure Dolt is running on the host so the sandbox can forward to it.
+  local _beads_dir=""
+  local _beads_candidates=(.beads(N) */.beads(N))
+  for _bd in "${_beads_candidates[@]}"; do
+    [ -d "$_bd/dolt" ] && _beads_dir="$_bd" && break
+  done
+  if [ -n "$_beads_dir" ]; then
+    local _dolt_port=""
+    local _dolt_pid=""
+    if [ -f "$_beads_dir/dolt-server.pid" ]; then
+      _dolt_pid=$(<"$_beads_dir/dolt-server.pid")
+      if kill -0 "$_dolt_pid" 2>/dev/null; then
+        _dolt_port=$(<"$_beads_dir/dolt-server.port" 2>/dev/null)
+      fi
+    fi
+    if [ -z "$_dolt_port" ]; then
+      local _port_pid=""
+      _port_pid=$(lsof -ti :3307 2>/dev/null | head -1)
+      if [ -n "$_port_pid" ]; then
+        local _port_cmd=""
+        _port_cmd=$(ps -p "$_port_pid" -o comm= 2>/dev/null)
+        if [[ "$_port_cmd" == *dolt* ]]; then
+          printf '\033[90m[codexd] Reusing existing Dolt process (pid %s) on port 3307.\033[0m\n' "$_port_pid"
+          _dolt_port=3307
+          _dolt_pid="$_port_pid"
+          echo "$_dolt_pid" > "$_beads_dir/dolt-server.pid"
+          echo "$_dolt_port" > "$_beads_dir/dolt-server.port"
+        else
+          printf '\033[1;33m[codexd]\033[0m Port 3307 in use by %s (pid %s).\n' "$_port_cmd" "$_port_pid"
+          if [ -f "$_beads_dir/dolt-server.log" ]; then
+            printf '\033[90m[codexd] Last log: %s\033[0m\n' "$(tail -1 "$_beads_dir/dolt-server.log")"
+          fi
+          printf '\033[1;34m[codexd]\033[0m Kill it and start Dolt? [Y/n] '
+          read -rsk1 _ans
+          printf '\n'
+          if [[ "$_ans" != [nN] ]]; then
+            kill "$_port_pid" 2>/dev/null
+            sleep 1
+            kill -0 "$_port_pid" 2>/dev/null && kill -9 "$_port_pid" 2>/dev/null
+            local _wait=0
+            while lsof -ti :3307 &>/dev/null && (( _wait < 5 )); do
+              sleep 1
+              (( _wait++ ))
+            done
+            if lsof -ti :3307 &>/dev/null; then
+              printf '\033[1;31m[codexd]\033[0m Port 3307 still in use after kill. Skipping Dolt.\n'
+              _dolt_port="skip"
+            fi
+          else
+            printf '\033[90m[codexd] Skipping Dolt.\033[0m\n'
+            _dolt_port="skip"
+          fi
+        fi
+      fi
+    fi
+    if [ -z "$_dolt_port" ]; then
+      _dolt_port=3307
+      printf '\033[1;34m[codexd]\033[0m Starting Dolt server on port %s...\n' "$_dolt_port"
+      nohup dolt sql-server --host 127.0.0.1 --port "$_dolt_port" \
+        --data-dir "$_beads_dir/dolt" > "$_beads_dir/dolt-server.log" 2>&1 &
+      _dolt_pid=$!
+      echo "$_dolt_pid" > "$_beads_dir/dolt-server.pid"
+      echo "$_dolt_port" > "$_beads_dir/dolt-server.port"
+      sleep 1
+      if kill -0 "$_dolt_pid" 2>/dev/null; then
+        printf '\033[1;32m[codexd]\033[0m Dolt server started (pid %s, port %s).\n' "$_dolt_pid" "$_dolt_port"
+      else
+        printf '\033[1;31m[codexd]\033[0m Dolt server failed to start.\n'
+        if [ -f "$_beads_dir/dolt-server.log" ]; then
+          printf '\033[90m[codexd] Log:\033[0m\n'
+          tail -5 "$_beads_dir/dolt-server.log" | while IFS= read -r _line; do
+            printf '\033[90m  %s\033[0m\n' "$_line"
+          done
+        fi
+        _dolt_port=""
+      fi
+    else
+      printf '\033[90m[codexd] Dolt already running (pid %s, port %s)\033[0m\n' "$_dolt_pid" "$_dolt_port"
+    fi
+    if [ -n "$_dolt_port" ] && [ "$_dolt_port" != "skip" ]; then
+      _forward_ports+=("$_dolt_port")
+    fi
+  fi
+
+  # Collect all ports to forward into the sandbox via socat
+  if [ ${#_forward_ports[@]} -gt 0 ]; then
+    local _unique_ports=($(printf '%s\n' "${_forward_ports[@]}" | sort -un))
+    _env_vars+=("SANDBOX_FORWARD_PORTS=${(j:,:)_unique_ports}")
+  fi
+
+  # Save current hash after build (or if no build was needed)
+  mkdir -p "$(dirname "$_hash_file")"
+  printf '%s\n' "$_current_hash" > "$_hash_file"
+
+  unfunction _codexd_content_hash 2>/dev/null
+
+  # Write env vars to a temp file for --env-file; cleaned up on exit
+  local _env_file=""
+  if [ ${#_env_vars[@]} -gt 0 ]; then
+    _env_file="$(mktemp -t codexd-env.XXXXXX)"
+    for _ev in "${_env_vars[@]}"; do
+      printf '%s\n' "$_ev"
+    done > "$_env_file"
+    chmod 600 "$_env_file"
+  fi
+
+  _codexd_cleanup() { [ -n "$_env_file" ] && rm -f "$_env_file" 2>/dev/null; }
+  trap '_codexd_cleanup' EXIT INT TERM
+
+  # -------------------------------------------------------------------------
+  # Extra mount picker — fzf-based directory browser with multiselect.
+  # -------------------------------------------------------------------------
+  _codexd_prompt_mounts() {
+    if ! $_mount; then
+      printf '\033[1;34m[codexd]\033[0m Mount extra directories into sandbox? [y/N] '
+      read -rsk1 _ans
+      printf '\n'
+      [[ "$_ans" == [yY] ]] && _mount=true
+    fi
+
+    if $_mount; then
+      if command -v fzf >/dev/null 2>&1; then
+        printf '\033[90m  Tab=toggle  Enter=confirm  Esc=skip\033[0m\n'
+        local _selected
+        local _search_roots=()
+        for _r in "$HOME/projects" "$HOME/src" "$HOME/work" "$HOME/repos"; do
+          [ -d "$_r" ] && _search_roots+=("$_r")
+        done
+        [ ${#_search_roots[@]} -eq 0 ] && _search_roots=("$HOME")
+        local _cwd_real
+        _cwd_real="$(pwd -P)"
+        _selected=$(
+          find "${_search_roots[@]}" -maxdepth 3 -type d \
+            -not -path '*/\.*' \
+            -not -path '*/node_modules/*' \
+            -not -path '*/venv/*' \
+            -not -path '*/.venv/*' \
+            -not -path '*/__pycache__/*' \
+            -not -path '*/target/*' \
+            -not -path '*/build/*' \
+            -not -path '*/.worktrees/*' \
+            2>/dev/null \
+          | sed "s|^$HOME|~|" \
+          | sort \
+          | fzf --multi \
+                --height=~60% \
+                --reverse \
+                --prompt="Select directories to mount (ro): " \
+                --header="Tab=toggle  Enter=confirm  Esc=skip" \
+                --preview="ls -lhF --color=always \$(echo {} | sed \"s|^~|$HOME|\")" \
+                --preview-window=right:40% \
+            2>/dev/null
+        )
+        if [ -n "$_selected" ]; then
+          while IFS= read -r _dir; do
+            _dir="${_dir/#\~/$HOME}"
+            local _dir_real
+            _dir_real="$(cd "$_dir" 2>/dev/null && pwd -P)" || continue
+            if [ "$_dir_real" = "$_cwd_real" ] || [[ "$_cwd_real" == "$_dir_real"/* ]]; then
+              printf '\033[1;33m[codexd]\033[0m  ⚠ %s is a parent of CWD (already mounted as .). Mount anyway? [y/N] ' "$_dir"
+              read -rsk1 _ans; printf '\n'
+              [[ "$_ans" != [yY] ]] && continue
+            fi
+            _extra_mounts+=("${_dir}:ro")
+            printf '\033[1;34m[codexd]\033[0m  + %s (ro)\n' "$_dir"
+          done <<< "$_selected"
+        fi
+      else
+        printf '\033[1;33m[codexd]\033[0m fzf not found — install with: brew install fzf\n'
+      fi
+    fi
+  }
+
+  # -------------------------------------------------------------------------
+  # Build workspace list for sandbox creation
+  # ~/.codex is mounted rw (not ro) so Codex state persists across sessions.
+  # -------------------------------------------------------------------------
+  _codexd_build_workspaces() {
+    local _pwd_real
+    _pwd_real="$(pwd -P)"
+    _workspaces=(".")
+
+    _codexd_add_mount() {
+      local _path="${1%%:*}"
+      local _real
+      _real="$(cd "$_path" 2>/dev/null && pwd -P)" || return 0
+      [ "$_real" = "$_pwd_real" ] && return 0
+      [[ "$_pwd_real" == "$_real"/* ]] && return 0
+      _workspaces+=("$1")
+    }
+
+    [ -d "$HOME/.codex" ] && _codexd_add_mount "$HOME/.codex"
+    [ -d "$HOME/.config/gh" ] && _codexd_add_mount "$HOME/.config/gh:ro"
+    for _m in "${_extra_mounts[@]}"; do
+      _codexd_add_mount "$_m"
+    done
+    unfunction _codexd_add_mount 2>/dev/null
+  }
+
+  # -------------------------------------------------------------------------
+  # Apply .sandbox-network rules to a sandbox
+  # -------------------------------------------------------------------------
+  _codexd_apply_network() {
+    local _sandbox_name="$1"
+    local _pwd_real
+    _pwd_real="$(pwd -P)"
+
+    local _allow_hosts=() _bypass_hosts=()
+    for _ws in "${_workspaces[@]}"; do
+      local _ws_dir="${_ws%%:*}"
+      [ "$_ws_dir" = "." ] && _ws_dir="$_pwd_real"
+      if [ -f "$_ws_dir/.sandbox-network" ]; then
+        while IFS= read -r _line; do
+          _line="${_line%%#*}"
+          _line="${_line// /}"
+          [ -z "$_line" ] && continue
+          if [[ "$_line" == bypass:* ]]; then
+            _bypass_hosts+=("${_line#bypass:}")
+          elif [[ "$_line" == allow:* ]]; then
+            _allow_hosts+=("${_line#allow:}")
+          else
+            _allow_hosts+=("$_line")
+          fi
+        done < "$_ws_dir/.sandbox-network"
+      fi
+    done
+
+    if [ ${#_allow_hosts[@]} -gt 0 ] || [ ${#_bypass_hosts[@]} -gt 0 ]; then
+      local _proxy_args=(docker sandbox network proxy "$_sandbox_name")
+      for _h in "${_allow_hosts[@]}"; do _proxy_args+=(--allow-host "$_h"); done
+      for _h in "${_bypass_hosts[@]}"; do _proxy_args+=(--bypass-host "$_h"); done
+      printf '\033[90m[codexd] Network rules:'
+      [ ${#_allow_hosts[@]} -gt 0 ] && printf ' allow=%s' "${_allow_hosts[*]}"
+      [ ${#_bypass_hosts[@]} -gt 0 ] && printf ' bypass=%s' "${_bypass_hosts[*]}"
+      printf '\033[0m\n'
+      (
+        for _try in 1 2 3 4 5; do
+          sleep 1
+          "${_proxy_args[@]}" 2>/dev/null && break
+        done
+      ) &!
+    fi
+  }
+
+  # -------------------------------------------------------------------------
+  # Create a new sandbox: create → init → apply network → attach
+  # -------------------------------------------------------------------------
+  _codexd_create_and_attach() {
+    local _sandbox_name="codex-$(basename "$(pwd -P)")"
+    local _workspaces=()
+    _codexd_build_workspaces
+
+    printf '\033[90m[codexd] Creating sandbox %s...\033[0m\n' "$_sandbox_name"
+    local _create_cmd=(docker sandbox create -t "$_image" --name "$_sandbox_name" claude "${_workspaces[@]}")
+    printf '\033[90m[codexd] %s\033[0m\n' "${_create_cmd[*]}"
+    "${_create_cmd[@]}" || return 1
+
+    # One-shot init: run ensure-plugins.sh with env vars
+    local _init_args=(docker sandbox exec)
+    [ -n "$_env_file" ] && _init_args+=(--env-file "$_env_file")
+    _init_args+=("$_sandbox_name" /home/agent/.local/bin/ensure-plugins.sh)
+    printf '\033[90m[codexd] Running init...\033[0m\n'
+    "${_init_args[@]}" 2>&1
+
+    # Apply network rules
+    _codexd_apply_network "$_sandbox_name"
+
+    # Attach
+    _codexd_attach "$_sandbox_name" "$@"
+  }
+
+  # -------------------------------------------------------------------------
+  # Attach to a sandbox: exec -it with env vars, workspace dir, zsh
+  # -------------------------------------------------------------------------
+  _codexd_attach() {
+    local _sandbox_name="$1"; shift
+
+    # Get primary workspace from sandbox metadata
+    local _ws_path
+    _ws_path=$(docker sandbox ls --json 2>/dev/null \
+      | jq -r --arg name "$_sandbox_name" '(.vms // [])[] | select(.name==$name) | .workspaces[0] // empty')
+
+    local _exec_args=(-it)
+    [ -n "$_env_file" ] && _exec_args+=(--env-file "$_env_file")
+    [ -n "$_ws_path" ] && _exec_args+=(-w "$_ws_path")
+
+    printf '\033[90m[codexd] docker sandbox exec %s %s /bin/zsh\033[0m\n' "${_exec_args[*]}" "$_sandbox_name"
+    docker sandbox exec "${_exec_args[@]}" "$_sandbox_name" /bin/zsh
+  }
+
+  # -------------------------------------------------------------------------
+  # Interactive sandbox picker
+  # -------------------------------------------------------------------------
+  local _sandbox_json
+  _sandbox_json=$(docker sandbox ls --json 2>/dev/null)
+
+  local _sb_names=() _sb_statuses=() _sb_workspaces=()
+  if [ -n "$_sandbox_json" ]; then
+    while IFS=$'\t' read -r _name _status _ws; do
+      _sb_names+=("$_name")
+      _sb_statuses+=("$_status")
+      _sb_workspaces+=("$_ws")
+    done < <(echo "$_sandbox_json" | jq -r '(.vms // [])[] | [.name, .status, (.workspaces[0] // "—")] | @tsv')
+  fi
+
+  local _n_sandboxes=${#_sb_names[@]}
+
+  # If rebuild happened, remove existing sandbox and create fresh
+  if $_did_rebuild; then
+    local _sandbox_name="codex-$(basename "$PWD")"
+    if docker sandbox ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$_sandbox_name"; then
+      printf '\033[1;34m[codexd]\033[0m Removing old sandbox %s to apply new image...\n' "$_sandbox_name"
+      docker sandbox rm "$_sandbox_name" 2>/dev/null
+    fi
+    _codexd_prompt_mounts
+    _codexd_create_and_attach "$@"
+  elif (( _n_sandboxes == 0 )); then
+    _codexd_prompt_mounts
+    _codexd_create_and_attach "$@"
+  else
+    # Build menu: existing sandboxes + New + Cancel
+    local _items=()
+    for (( i=1; i<=${_n_sandboxes}; i++ )); do
+      local _color="\033[32m"
+      [[ "${_sb_statuses[$i]}" != "running" ]] && _color="\033[33m"
+      local _ws_short="${_sb_workspaces[$i]}"
+      (( ${#_ws_short} > 30 )) && _ws_short="…${_ws_short[-30,-1]}"
+      _items+=("$(printf '%s  %b%-7s\033[0m  %s' "${_sb_names[$i]}" "$_color" "${_sb_statuses[$i]}" "$_ws_short")")
+    done
+    _items+=("\033[1;33m+ New sandbox\033[0m — create for $(basename "$PWD")")
+    _items+=("Cancel")
+
+    # Default selection: sandbox matching current dir, or "+ New sandbox"
+    local _sel=$(( _n_sandboxes + 1 ))
+    local _cur_sandbox="codex-$(basename "$PWD")"
+    for (( i=1; i<=${_n_sandboxes}; i++ )); do
+      if [[ "${_sb_names[$i]}" == "$_cur_sandbox" ]]; then
+        _sel=$i
+        break
+      fi
+    done
+    local _n=${#_items[@]}
+
+    printf '\033[?25l'
+
+    _codexd_draw_menu() {
+      for (( i=1; i<=$_n; i++ )); do
+        if (( i == _sel )); then
+          printf '\033[2K  \033[1;36m❯ %b\033[0m\n' "${_items[$i]}"
+        else
+          printf '\033[2K    %b\n' "${_items[$i]}"
+        fi
+      done
+    }
+
+    printf '\033[1;34m[codexd]\033[0m Select a sandbox or create new (↑/↓, Enter, q to cancel):\n'
+    _codexd_draw_menu
+
+    while true; do
+      read -rsk1 _key
+      case "$_key" in
+        $'\x1b')
+          read -rsk2 _seq
+          case "$_seq" in
+            '[A') (( _sel > 1 )) && (( _sel-- )) ;;
+            '[B') (( _sel < _n )) && (( _sel++ )) ;;
+          esac
+          ;;
+        $'\n'|'') break ;;
+        q|Q) _sel=$_n; break ;;
+        *) continue ;;
+      esac
+      printf '\033[%dA\r' "$_n"
+      _codexd_draw_menu
+    done
+
+    # Clear menu
+    printf '\033[%dA\r' "$_n"
+    for (( i=1; i<=$_n; i++ )); do printf '\033[2K\n'; done
+    printf '\033[%dA' "$_n"
+    printf '\033[?25h'
+    unfunction _codexd_draw_menu 2>/dev/null
+
+    if (( _sel == _n )); then
+      printf '\033[1;34m[codexd]\033[0m Cancelled.\n'
+    elif (( _sel == _n - 1 )); then
+      _codexd_prompt_mounts
+      _codexd_create_and_attach "$@"
+    else
+      # Selected existing sandbox — action picker
+      local _chosen="${_sb_names[$_sel]}"
+
+      local _actions=("Attach  — open zsh (run codex manually)"
+                      "Delete  — remove sandbox"
+                      "Cancel")
+      local _asel=1
+      local _an=${#_actions[@]}
+
+      printf '\033[?25l'
+
+      _codexd_draw_actions() {
+        for (( i=1; i<=$_an; i++ )); do
+          if (( i == _asel )); then
+            printf '  \033[1;36m❯ %s\033[0m\n' "${_actions[$i]}"
+          else
+            printf '    %s\n' "${_actions[$i]}"
+          fi
+        done
+      }
+
+      printf '\033[1;34m[codexd]\033[0m \033[1m%s\033[0m — pick action:\n' "$_chosen"
+      _codexd_draw_actions
+
+      while true; do
+        read -rsk1 _key
+        case "$_key" in
+          $'\x1b')
+            read -rsk2 _seq
+            case "$_seq" in
+              '[A') (( _asel > 1 )) && (( _asel-- )) ;;
+              '[B') (( _asel < _an )) && (( _asel++ )) ;;
+            esac
+            ;;
+          $'\n'|'') break ;;
+          q|Q) _asel=$_an; break ;;
+          *) continue ;;
+        esac
+        printf '\033[%dA\r' "$_an"
+        _codexd_draw_actions
+      done
+
+      # Clear action menu
+      printf '\033[%dA\r' "$_an"
+      for (( i=1; i<=$_an; i++ )); do printf '\033[2K\n'; done
+      printf '\033[%dA' "$_an"
+      printf '\033[?25h'
+      unfunction _codexd_draw_actions 2>/dev/null
+
+      case $_asel in
+        1)
+          printf '\033[1;34m[codexd]\033[0m Attaching to \033[1m%s\033[0m...\n' "$_chosen"
+          _codexd_attach "$_chosen" "$@"
+          ;;
+        2)
+          printf '\033[1;33m[codexd]\033[0m Remove \033[1m%s\033[0m? [y/N] ' "$_chosen"
+          read -rsk1 _confirm
+          printf '\n'
+          if [[ "$_confirm" == [yY] ]]; then
+            docker sandbox rm "$_chosen" 2>/dev/null
+            printf '\033[1;34m[codexd]\033[0m Removed \033[1m%s\033[0m.\n' "$_chosen"
+          else
+            printf '\033[1;34m[codexd]\033[0m Cancelled.\n'
+          fi
+          ;;
+        *)
+          printf '\033[1;34m[codexd]\033[0m Cancelled.\n'
+          ;;
+      esac
+    fi
+  fi
+
+  _codexd_cleanup
+  unfunction _codexd_create_and_attach _codexd_attach _codexd_build_workspaces \
+    _codexd_apply_network _codexd_prompt_mounts 2>/dev/null
+}
+
+# cxd() — shorthand for codexd (interactive sandbox picker)
+cxd() { codexd "$@"; }
 
 # cls() — alias for cl() (convenience shorthand)
 cls() { cl -s "$@"; }
@@ -2126,7 +2692,7 @@ function k9() { kill -9 $1 }
 sb() {
   local result
   if [ $# -gt 0 ]; then
-    result=$(printf '%s' "${*//$'\n'/}" | tr -d '[:space:]')
+    result=$(echo -n "$*" | tr -d '[:space:]')
   else
     result=$(tr -d '[:space:]')
   fi
