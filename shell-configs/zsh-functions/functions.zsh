@@ -1095,6 +1095,13 @@ clauded() {
     fi
   fi
 
+  # Clean up dangling images left behind by rebuilds.
+  if $_did_rebuild; then
+    local _pruned
+    _pruned=$(docker image prune -f 2>/dev/null | grep 'Total reclaimed' || true)
+    [ -n "$_pruned" ] && printf '\033[2m[clauded]\033[0m %s\n' "$_pruned"
+  fi
+
   # Auto-inject DigitalOcean API token if not already provided.
   # Sources from: doctl config, then macOS keychain, then skips.
   local _has_do=false
@@ -1722,6 +1729,13 @@ codexd() {
       docker build "${_build_flags[@]}" -t "$_image" -f "$_repo/$_dockerfile" "$_repo" || return 1
       _did_rebuild=true
     fi
+  fi
+
+  # Clean up dangling images left behind by rebuilds.
+  if $_did_rebuild; then
+    local _pruned
+    _pruned=$(docker image prune -f 2>/dev/null | grep 'Total reclaimed' || true)
+    [ -n "$_pruned" ] && printf '\033[2m[codexd]\033[0m %s\n' "$_pruned"
   fi
 
   # Auto-inject DigitalOcean API token if not already provided.
