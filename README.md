@@ -11,16 +11,23 @@ This repo contains shell configs (zsh functions, zellij, nvim, kitty, Docker san
 ## Pretty Diagrams
 
 `plugins/pretty-diagrams` provides a reusable diagram skill, art-direction prompt,
-and a single-container local Excalidraw editor plus the official Excalidraw MCP server.
+and a local-only deployment of the full upstream Excalidraw app and official MCP server
+in one isolated application container, with a loopback-only ingress proxy.
 
 ```sh
 docker compose -f plugins/pretty-diagrams/runtime/compose.yaml up -d --build
 ```
 
-Open [the local editor](http://127.0.0.1:3100). Agents connect over Streamable HTTP
+Open [the upstream Excalidraw app](http://127.0.0.1:3100). The separate
+[MCP checkpoint bridge](http://127.0.0.1:3100/bridge/) transfers scenes using its
+**Open in Excalidraw** button. Agents connect over Streamable HTTP
 at `http://127.0.0.1:3100/mcp`. Add this repository as a Claude Code plugin marketplace
 and install `pretty-diagrams`; its `.mcp.json` configures the endpoint. The skill is
 also a standard `SKILL.md` directory and the plugin includes a Codex manifest.
+
+Public diagram uploads are disabled. Browser connections are limited to the local
+origin, MCP assets are bundled locally, and the application container has no internet
+route. Build-time dependency downloads still require internet access.
 
 See the [skill](plugins/pretty-diagrams/skills/pretty-diagrams/SKILL.md),
 [local runtime details](plugins/pretty-diagrams/skills/pretty-diagrams/references/runtime.md),
