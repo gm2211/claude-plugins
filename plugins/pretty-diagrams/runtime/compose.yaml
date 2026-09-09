@@ -1,11 +1,11 @@
 services:
   excalidraw:
     build: .
-    image: gm2211/pretty-diagrams:0.1.0
+    image: gm2211/pretty-diagrams:0.2.0
     init: true
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3100:3100"
+    networks:
+      - local-only
     volumes:
       - checkpoints:/tmp/excalidraw-mcp-checkpoints
     healthcheck:
@@ -13,5 +13,25 @@ services:
       interval: 10s
       timeout: 3s
       retries: 6
+  ingress:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingress
+    image: gm2211/pretty-diagrams-ingress:0.2.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - default
+      - local-only
+    depends_on:
+      excalidraw:
+        condition: service_healthy
+
 volumes:
   checkpoints:
+
+networks:
+  default: {}
+  local-only:
+    internal: true

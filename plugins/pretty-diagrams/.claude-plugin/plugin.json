@@ -1,6 +1,6 @@
 {
   "name": "pretty-diagrams",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hand-drawn diagrams with a local Excalidraw editor and MCP server",
   "author": {
     "name": "gm2211"
