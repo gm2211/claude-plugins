@@ -6,17 +6,7 @@ Terminal setup: kitty + zellij with Catppuccin Mocha theme, Fira Code font, and 
 
 ## Prerequisites
 
-```bash
-brew install kitty zellij lazygit
-brew install neovim fzf atuin autojump pngpaste jq fnm colorls
-brew install --cask font-symbols-only-nerd-font font-meslo-lg-nerd-font font-fira-code
-```
-
-Oh My Zsh must be installed before symlinking the theme:
-
-```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-```
+Install the tools and fonts below via Homebrew, and install Oh My Zsh before symlinking the theme — see the Quick Install script for the exact commands.
 
 zjstatus (Zellij status bar plugin) is auto-downloaded as a WASM plugin from the layout config on first launch — no manual install needed.
 
@@ -138,22 +128,11 @@ kill -SIGUSR1 $(pgrep kitty) 2>/dev/null
 
 ## Claude worktree function
 
-`shell-configs/zsh-functions/functions.zsh` defines a `claude()` shell function that intercepts the `claude` command when you are on the default branch (main/master) of a git repo and offers to create or switch to a worktree first. This prevents accidental work directly on main.
+`shell-configs/zsh-functions/functions.zsh` defines a `claude()` shell function that intercepts the `claude` command on the default branch (main/master) of a git repo and offers to create or switch to a worktree first, preventing accidental work directly on main.
 
 ### Setup
 
-Symlink `functions.zsh` to your local config and source it from your `.zshrc` (this also includes the `ss` function and any future additions):
-
-```bash
-# Symlink the file to your config directory
-mkdir -p ~/.config/zsh
-ln -sf ~/projects/claude-plugins/shell-configs/zsh-functions/functions.zsh ~/.config/zsh/functions.zsh
-
-# Then, add this to your ~/.zshrc
-source ~/.config/zsh/functions.zsh
-```
-
-For detailed setup instructions, see [ZSH Functions — Installation Instructions](./zsh-functions/CLAUDE.md).
+Symlink `functions.zsh` to your local config and source it from your `.zshrc` (this also includes the `ss` function and any future additions). See [ZSH Functions — Installation Instructions](./zsh-functions/CLAUDE.md) for the exact commands.
 
 ### How it works
 
@@ -166,7 +145,7 @@ The function uses `command claude` to call the real claude binary, bypassing the
 
 ## Claude Code status line
 
-`shell-configs/claude-status-line/statusline.sh` is a script that formats a single-line status bar for Claude Code. It reads session JSON from stdin and displays: model name, context window usage (colored progress bar), session cost, git info (repo, branch, worktree, files changed, additions/deletions), sandbox mode, working directory, and current time.
+`shell-configs/claude-status-line/statusline.sh` formats a single-line Claude Code status bar from session JSON on stdin: model name, context window usage (colored progress bar), session cost, git info (repo, branch, worktree, files changed, additions/deletions), sandbox mode, working directory, and current time.
 
 ### Setup
 
@@ -189,21 +168,12 @@ chmod +x ~/.config/claude-status-line/statusline.sh
 }
 ```
 
-Requires `jq` to be installed (`brew install jq`).
-
-### Config file location
-
-| Repo path | Installs to |
-|-----------|-------------|
-| `claude-status-line/statusline.sh` | `~/.config/claude-status-line/statusline.sh` |
+Requires `jq` to be installed (`brew install jq`). See Config file locations above for the install path.
 
 ## Troubleshooting
 
 **Missing icons (boxes in statusline):**
-Install `font-symbols-only-nerd-font` and reload kitty:
-```bash
-kill -SIGUSR1 $(pgrep kitty)
-```
+Install `font-symbols-only-nerd-font` and reload kitty (see **Kitty config reload** below).
 
 **Cmd+key not working in zellij:**
 The key must be unmapped in kitty.conf first. Add `map cmd+<key>` with no action to pass it through to zellij via the kitty keyboard protocol.
