@@ -52,11 +52,17 @@ export PATH="$PATH:$GOROOT/bin"
 
 # Exported because MCP servers read these from the environment at startup.
 export GH_TOKEN=$(gh auth token 2>/dev/null)
-export DIGITALOCEAN_API_TOKEN=$(doctl auth token 2>/dev/null)
-export RENDER_API_KEY=$(security find-generic-password -a render -s render-api-key -w 2>/dev/null)
-export RENDER_API_KEY_HUDSON=$(security find-generic-password -a render -s render-api-key-hudson -w 2>/dev/null)
-export GROQ_API_KEY=$(security find-generic-password -a groq -s renzo-api-key -w 2>/dev/null)
-export ANTHROPIC_API_KEY=$(security find-generic-password -a claude -s api-key -w 2>/dev/null)
+# API tokens are NOT exported into every shell: any build or install that runs here would
+# inherit them. Load them for one command with `with-secrets NAME... -- cmd`, or into this
+# interactive shell only with `secrets-on [NAME...]`. (Mappings: ~/.claude/bin/with-secrets.)
+secrets-on() {
+  local n v names=("$@")
+  (( ${#names} )) || names=($(~/.claude/bin/with-secrets --list))
+  for n in $names; do
+    v="$(~/.claude/bin/with-secrets "$n" -- /usr/bin/printenv "$n" 2>/dev/null)" && export "$n=$v" || print -u2 "secrets-on: could not load $n"
+  done
+}
+alias with-secrets="$HOME/.claude/bin/with-secrets"
 
 # ---------------------------------------------------------------------------
 #  Completions
