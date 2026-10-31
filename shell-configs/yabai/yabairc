@@ -37,3 +37,10 @@ yabai -m rule --add app="^Calculator$" manage=off
 yabai -m rule --add app="^Karabiner" manage=off
 yabai -m rule --add app="^Archive Utility$" manage=off
 yabai -m rule --add app="^Finder$" title="^(Copy|Move|Delete|Connecting)" manage=off
+
+# Self-heal: restart yabai when a closed window still holds a tile
+# (see heal-ghosts.sh). Only restarts when a leftover entry is found.
+HEAL_GHOSTS="$(dirname "$(readlink -f "$0")")/heal-ghosts.sh"
+for event in space_changed application_terminated window_destroyed; do
+  yabai -m signal --add label="heal_ghosts_$event" event="$event" action="$HEAL_GHOSTS"
+done
