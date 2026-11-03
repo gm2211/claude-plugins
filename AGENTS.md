@@ -1,68 +1,29 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+## Issue tracking
 
-## Quick Reference
+Tasks are GitHub Issues, managed with the `gh` CLI:
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+gh issue list                                       # Find open work
+gh issue create --title "..." --body "..."          # File a task
+gh issue close <n> --comment "Completed in #<pr>"   # Complete work
 ```
+
+For follow-up work discovered along the way, file a new issue and reference the parent issue number (for example "Follow-up to #12") in the body.
 
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
-Follow the same **MANDATORY WORKFLOW** and **CRITICAL RULES** as the "Session Completion" section under Beads Issue Tracker below (file issues, run quality gates, update issue status, push, clean up, verify, hand off) — with two differences specific to this repo:
-
-- Use `bd sync` (not `bd dolt push`) in the push step.
-- If you add plugins back to this repo, bump the version in `.claude-plugin/marketplace.json` on every commit that changes plugin files.
-
-## Worktree Convention
-
-When the coordinator dispatches you with REPO_ROOT and EPIC_BRANCH:
-1. `cd $REPO_ROOT`
-2. `git worktree add .worktrees/${EPIC_BRANCH}--<your-task-slug> -b ${EPIC_BRANCH}--<your-task-slug>`
-3. `cd .worktrees/${EPIC_BRANCH}--<your-task-slug>`
-4. Do all work in this worktree
-5. Commit and push your branch when done
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
 **MANDATORY WORKFLOW:**
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
+1. **File issues for remaining work** - Create GitHub Issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
+3. **Update issue status** - Close finished issues, comment on in-progress ones
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```
@@ -75,4 +36,14 @@ bd close <id>         # Complete work
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+
+Repo-specific: if you add plugins back to this repo, bump the version in `.claude-plugin/marketplace.json` on every commit that changes plugin files.
+
+## Worktree Convention
+
+When the coordinator dispatches you with REPO_ROOT and EPIC_BRANCH:
+1. `cd $REPO_ROOT`
+2. `git worktree add .worktrees/${EPIC_BRANCH}--<your-task-slug> -b ${EPIC_BRANCH}--<your-task-slug>`
+3. `cd .worktrees/${EPIC_BRANCH}--<your-task-slug>`
+4. Do all work in this worktree
+5. Commit and push your branch when done
