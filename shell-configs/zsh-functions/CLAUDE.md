@@ -47,4 +47,3 @@ If you used a symlink (recommended), just pull the latest changes and reload you
 | `cl`       | Wraps `wt`/`wt new` for Claude Code. On the default branch, tries `wt` (selector) first; if that fails (no worktrees), falls back to `wt new` (creator); then launches Claude inside the chosen worktree. `cl --skip` / `cl -s` bypasses worktree checks. |
 | `clauded`  | Launches Claude inside a Docker sandbox using the `gm-claude-dev` custom template (zellij, nvim, starship, zsh). Runs `docker sandbox run -t gm-claude-dev claude`. |
 | `overwatch` / `ow` | Deploy dashboard TUI. Auto-clones `gm2211/overwatch` to `~/projects/overwatch` if missing, sets up a `.venv` with textual. |
-| `bdtui` / `bdt` | Beads TUI (issue tracker). Auto-clones `gm2211/beads-tui` to `~/projects/beads-tui` if missing, sets up a `.venv` with textual. |
