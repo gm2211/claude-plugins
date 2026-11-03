@@ -57,20 +57,6 @@ RUN command -v gh >/dev/null 2>&1 || { \
     }
 
 # ---------------------------------------------------------------------------
-# Dolt (required by bd/beads issue tracker)
-# ---------------------------------------------------------------------------
-RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
-
-# ---------------------------------------------------------------------------
-# Beads (bd) binary
-# ---------------------------------------------------------------------------
-RUN set -eux; \
-    curl -fsSL "https://github.com/steveyegge/beads/releases/download/v0.56.1/beads_0.56.1_linux_${TARGETARCH}.tar.gz" \
-        | tar xz -C /tmp; \
-    mv /tmp/bd /usr/local/bin/bd; \
-    chmod +x /usr/local/bin/bd
-
-# ---------------------------------------------------------------------------
 # Zellij (latest release, multi-arch)
 # ---------------------------------------------------------------------------
 RUN set -eux; \
@@ -333,16 +319,6 @@ if [ -n "$SANDBOX_FORWARD_PORTS" ]; then
           TCP:host.docker.internal:"$FWD_PORT" &
   done
 fi
-
-# Clean stale dolt state from host-mounted .beads/ dirs and write forwarded port
-for BEADS_DIR in $(find /Users /home -maxdepth 4 -name ".beads" -type d 2>/dev/null); do
-  rm -f "$BEADS_DIR/dolt-server.pid" "$BEADS_DIR/dolt-server.lock" 2>/dev/null
-  if [ -n "$SANDBOX_FORWARD_PORTS" ]; then
-    # If dolt port (3307) is among forwarded ports, update the port file
-    echo "$SANDBOX_FORWARD_PORTS" | tr ',' '\n' | grep -qx 3307 && \
-      echo "3307" > "$BEADS_DIR/dolt-server.port"
-  fi
-done
 
 # sp (specify) — find mounted host repo or clone, then create ~/.local/bin/sp
 # Always use a node wrapper (not symlink to specify wrapper) because the host

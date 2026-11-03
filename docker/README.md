@@ -32,8 +32,6 @@ clauded .
 | Neovim | Editor (AstroNvim distribution) |
 | Zsh + Starship | Shell + prompt |
 | GitHub CLI | GitHub operations |
-| Beads (`bd`) | Git-backed issue tracker |
-| Dolt | Versioned database (beads backend) |
 | colorls | Colorized `ls` with icons |
 | pbcopy (OSC 52) | Clipboard passthrough to host terminal |
 
